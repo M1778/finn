@@ -1,0 +1,2 @@
+# finn
+Finn package manager.
