@@ -8,11 +8,20 @@ fn setup_fake_remote(temp: &TempDir) -> String {
     let remote_path = temp.path().join("remote-pkg");
     fs::create_dir(&remote_path).unwrap();
     
+    // Initialize a dummy git repo
     SysCommand::new("git").arg("init").current_dir(&remote_path).output().unwrap();
     SysCommand::new("git").arg("config").arg("user.email").arg("test@test.com").current_dir(&remote_path).output().unwrap();
     SysCommand::new("git").arg("config").arg("user.name").arg("Test").current_dir(&remote_path).output().unwrap();
     
-    fs::write(remote_path.join("finn.toml"), "[package]\nname=\"testpkg\"").unwrap();
+    // Write a VALID finn.toml
+    let config = r#"
+[project]
+name = "testpkg"
+version = "0.1.0"
+envpath = ".finn"
+entrypoint = "lib.fin"
+"#;
+    fs::write(remote_path.join("finn.toml"), config).unwrap();
     fs::write(remote_path.join("lib.fin"), "pub fun test() {}").unwrap();
     
     SysCommand::new("git").arg("add").arg(".").current_dir(&remote_path).output().unwrap();
@@ -30,7 +39,6 @@ fn test_add_uses_cache() {
     let remote_url = setup_fake_remote(&temp_remote);
     let project_path = temp_project.path();
 
-    // FIX: Use FINN_TEST_HOME to override the cache location reliably
     let env_vars = vec![("FINN_TEST_HOME", temp_home.path().to_str().unwrap())];
 
     // Initialize
@@ -47,7 +55,8 @@ fn test_add_uses_cache() {
         .arg(&remote_url)
         .assert()
         .success()
-        .stdout(predicate::str::contains("Package 'remote-pkg' added"));
+        // FIX: Updated expectation to match the new output format
+        .stdout(predicate::str::contains("Package 'remote-pkg' installed"));
 
     // Verify Cache Exists
     let cache_dir = temp_home.path().join(".finn/cache/registry");
