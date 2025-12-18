@@ -3,17 +3,18 @@ use crate::commands::add;
 use crate::lock::FinnLock;
 use crate::FinnContext;
 use crate::utils;
+use crate::integrity;
 use std::path::Path;
 use std::collections::HashSet;
 use std::fs;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use colored::*;
 
 pub fn run(ctx: &FinnContext) -> Result<()> {
     let pb = utils::create_spinner("Reading configuration...", ctx.quiet);
     
     let config = FinnConfig::load()?;
-    let mut lock = FinnLock::load()?; // Load lockfile to update it
+    let mut lock = FinnLock::load()?;
     let env_path = Path::new(&config.project.envpath);
     let packages_dir = env_path.join("packages");
 
@@ -25,30 +26,49 @@ pub fn run(ctx: &FinnContext) -> Result<()> {
 
     if let Some(packages) = config.packages {
         for (name, source) in packages {
-            let (_, url, _) = add::resolve_source(&source);
+            // Resolve source to get URL/Version
+            let pkg_source = add::resolve_source(&source);
             
-            // Use the recursive installer
-            // This ensures dependencies of dependencies are also synced
+            // FIX: Capture expected checksum from lockfile BEFORE install updates it
+            let expected_checksum = lock.packages.get(&name).map(|p| p.checksum.clone());
+
             pb.suspend(|| {
                 if !ctx.quiet { println!("{} Syncing '{}'...", "[INFO]".blue(), name); }
             });
 
+            // Install (Recursive)
             add::install_recursive(
                 &name, 
-                &url, 
+                &pkg_source.url, 
+                pkg_source.version.as_deref(), // Pass version
                 &packages_dir, 
                 &mut lock, 
                 &mut visited, 
                 ctx
             )?;
+
+            // VERIFY INTEGRITY
+            if let Some(expected) = expected_checksum {
+                if !expected.is_empty() {
+                    let installed_path = packages_dir.join(&name);
+                    let current_hash = integrity::calculate_package_hash(&installed_path)?;
+                    
+                    if current_hash != expected {
+                        return Err(anyhow!(
+                            "Integrity Check Failed for '{}'!\nExpected: {}\nActual:   {}\nSecurity Warning: The package contents have changed since they were locked.",
+                            name, expected, current_hash
+                        ));
+                    }
+                }
+            }
         }
     }
     
-    lock.save()?; // Save updated lockfile
+    lock.save()?;
 
     pb.finish_and_clear();
     if !ctx.quiet {
-        println!("{} Sync complete.", "[OK]".green());
+        println!("{} Sync complete. Integrity verified.", "[OK]".green());
     }
     Ok(())
 }
