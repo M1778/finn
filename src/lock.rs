@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use anyhow::Result; // Removed Context
+use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct FinnLock {
@@ -14,6 +14,8 @@ pub struct LockedPackage {
     pub version: String,
     pub source: String,
     pub commit: String,
+    #[serde(default)] // Allow old lockfiles to load without crashing
+    pub checksum: String, 
 }
 
 impl FinnLock {
@@ -32,11 +34,12 @@ impl FinnLock {
         Ok(())
     }
 
-    pub fn update(&mut self, name: String, source: String, commit: String, version: String) {
+    pub fn update(&mut self, name: String, source: String, commit: String, version: String, checksum: String) {
         self.packages.insert(name, LockedPackage {
             source,
             commit,
             version,
+            checksum,
         });
     }
 }
