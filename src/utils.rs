@@ -1,9 +1,9 @@
 use std::env;
+use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
 
-/// Creates a consistent spinner. Returns a hidden spinner if quiet mode is requested.
 pub fn create_spinner(msg: &str, quiet: bool) -> ProgressBar {
     if quiet {
         return ProgressBar::hidden();
@@ -19,12 +19,22 @@ pub fn create_spinner(msg: &str, quiet: bool) -> ProgressBar {
     pb
 }
 
+/// Centralized logic to find the user's home directory.
+/// Respects FINN_TEST_HOME for testing purposes.
+pub fn get_home_dir() -> Result<PathBuf> {
+    if let Ok(path) = env::var("FINN_TEST_HOME") {
+        return Ok(PathBuf::from(path));
+    }
+    
+    dirs::home_dir().ok_or(anyhow!("Could not find home directory"))
+}
+
 pub fn find_compiler() -> Result<String> {
     if let Ok(path) = env::var("FIN_COMPILER_PATH") {
         return Ok(path);
     }
 
-    if let Some(home) = dirs::home_dir() {
+    if let Ok(home) = get_home_dir() {
         let bin_name = if cfg!(windows) { "fin.exe" } else { "fin" };
         let global_path = home.join(".finn").join("bin").join(bin_name);
         
