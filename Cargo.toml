@@ -1,7 +1,7 @@
 [package]
 name = "finn"
 version = "0.4.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
@@ -16,8 +16,12 @@ tempfile = "3.8"
 dirs = "5.0"
 indicatif = "0.17"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
-# NEW DEPENDENCIES
-dialoguer = "0.11"  # For Interactive Menus
-sha2 = "0.10"       # For hashing URLs (Caching)
-hex = "0.4"         # For hex encoding hashes
-fs_extra = "1.3"    # For recursive copying
+dialoguer = "0.11"
+sha2 = "0.10"
+hex = "0.4"
+fs_extra = "1.3"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.8"
