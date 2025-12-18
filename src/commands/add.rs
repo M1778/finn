@@ -4,6 +4,7 @@ use crate::validator::validate_package;
 use crate::FinnContext;
 use crate::cache;
 use crate::utils;
+use crate::integrity;
 use std::path::Path;
 use std::fs;
 use std::process::Command;
@@ -11,19 +12,39 @@ use std::collections::HashSet;
 use anyhow::{Result, anyhow, Context};
 use colored::*;
 
+pub struct PackageSource {
+    pub name: String,
+    pub url: String,
+    pub version: Option<String>,
+    pub is_official: bool,
+}
+
 pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
     let mut config = FinnConfig::load()?;
     let mut lock = FinnLock::load()?;
 
-    // 1. Resolve the requested package
-    let (name, url, _is_official) = resolve_source(package_ref);
+    // 1. Resolve Source
+    let source = resolve_source(package_ref);
 
-    if !ctx.quiet { println!("{} Resolving '{}'...", "[INFO]".blue(), name); }
+    if !ctx.quiet { 
+        let v_str = source.version.as_deref().unwrap_or("latest");
+        println!("{} Resolving '{}' ({}) ...", "[INFO]".blue(), source.name, v_str); 
+    }
 
-    // 2. Update Root Config (finn.toml)
-    // We do this first so it's saved even if recursion fails later (partial install)
+    // 2. Update Root Config
     if config.packages.is_none() { config.packages = Some(std::collections::HashMap::new()); }
-    config.packages.as_mut().unwrap().insert(name.clone(), package_ref.to_string());
+    
+    // Store with version if present: "url#version" or just "url"
+    // For local paths, we just store the path.
+    let config_value = if let Some(v) = &source.version {
+        // If it's a registry/git url, append #version for storage? 
+        // Or just store the raw input? Storing raw input "user/repo@v1" preserves intent.
+        package_ref.to_string()
+    } else {
+        package_ref.to_string()
+    };
+
+    config.packages.as_mut().unwrap().insert(source.name.clone(), config_value);
     config.save()?;
 
     // 3. Start Recursive Installation
@@ -34,8 +55,9 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
     if !packages_dir.exists() { fs::create_dir_all(&packages_dir)?; }
 
     install_recursive(
-        &name, 
-        &url, 
+        &source.name, 
+        &source.url, 
+        source.version.as_deref(),
         &packages_dir, 
         &mut lock, 
         &mut visited, 
@@ -44,30 +66,26 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
 
     lock.save()?;
 
-    if !ctx.quiet { println!("{} Package '{}' and dependencies installed.", "[OK]".green(), name); }
+    if !ctx.quiet { println!("{} Package '{}' installed.", "[OK]".green(), source.name); }
     Ok(())
 }
 
-/// Recursively installs a package and its dependencies.
-/// Uses 'visited' set to prevent infinite loops (Circular Dependencies).
 pub fn install_recursive(
     name: &str, 
     url: &str, 
+    version: Option<&str>,
     packages_dir: &Path, 
     lock: &mut FinnLock,
     visited: &mut HashSet<String>,
     ctx: &FinnContext
 ) -> Result<()> {
-    // 1. Check Cycle
-    if visited.contains(name) {
-        return Ok(());
-    }
+    if visited.contains(name) { return Ok(()); }
     visited.insert(name.to_string());
 
     let pb = utils::create_spinner(&format!("Installing {}...", name), ctx.quiet);
 
-    // 2. Download to Cache
-    let cached_path = match cache::ensure_cached(name, url, ctx.verbose) {
+    // 1. Download to Cache (Pass Version)
+    let cached_path = match cache::ensure_cached(name, url, version, ctx.verbose) {
         Ok(p) => p,
         Err(e) => {
             pb.finish_with_message(format!("{} Failed to download {}", "[FAIL]".red(), name));
@@ -75,22 +93,17 @@ pub fn install_recursive(
         }
     };
 
-    // 3. Validate
+    // 2. Validate
     if let Err(e) = validate_package(&cached_path, ctx.ignore_regulations) {
         pb.finish_with_message(format!("{} Validation failed for {}", "[FAIL]".red(), name));
         return Err(e);
     }
 
-    // 4. Copy to Project (.finn/packages/<name>)
+    // 3. Copy to Project
     let install_path = packages_dir.join(name);
-    
-    // If exists and force is true, remove it. If exists and not force, skip copy but still check deps.
     if install_path.exists() {
         if ctx.force {
             fs::remove_dir_all(&install_path)?;
-        } else {
-            // Already installed, but we must still check its dependencies!
-            // Fall through to dependency check...
         }
     }
 
@@ -101,38 +114,37 @@ pub fn install_recursive(
         }
     }
 
-    // 5. Update Lockfile
-    // We get the commit hash from the INSTALLED copy (to be safe)
+    // 4. Get Commit Hash
     let output = Command::new("git")
         .args(&["rev-parse", "HEAD"])
         .current_dir(&install_path)
         .output();
-
-    // Git might fail if the cached copy didn't preserve .git folder or if it's a raw copy.
-    // If git fails, we assume "HEAD" or skip locking specific commit for now.
     let commit_hash = match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => "unknown".to_string(),
     };
 
-    lock.update(name.to_string(), url.to_string(), commit_hash, "HEAD".to_string());
+    // 5. Calculate Checksum
+    let checksum = integrity::calculate_package_hash(&install_path)
+        .context("Failed to calculate package checksum")?;
+
+    // 6. Update Lockfile
+    let version_str = version.unwrap_or("HEAD").to_string();
+    lock.update(name.to_string(), url.to_string(), commit_hash, version_str, checksum);
     
     pb.finish_and_clear();
     if !ctx.quiet { println!("   + Installed {}", name); }
 
-    // 6. Read Package Config (finn.toml) for Dependencies
+    // 7. Recurse Dependencies
     let pkg_config_path = install_path.join("finn.toml");
     if pkg_config_path.exists() {
-        // Load config using the new helper
         let pkg_config = FinnConfig::from_file(&pkg_config_path)
             .context(format!("Failed to parse finn.toml for {}", name))?;
 
         if let Some(deps) = pkg_config.packages {
             for (dep_name, dep_source) in deps {
-                let (_, dep_url, _) = resolve_source(&dep_source);
-                
-                // RECURSE
-                install_recursive(&dep_name, &dep_url, packages_dir, lock, visited, ctx)?;
+                let dep_src = resolve_source(&dep_source);
+                install_recursive(&dep_name, &dep_src.url, dep_src.version.as_deref(), packages_dir, lock, visited, ctx)?;
             }
         }
     }
@@ -140,14 +152,23 @@ pub fn install_recursive(
     Ok(())
 }
 
-pub fn resolve_source(input: &str) -> (String, String, bool) {
-    if input.starts_with("http") || input.starts_with("git@") || input.starts_with("ssh://") || input.starts_with("file://") {
-        let trimmed = input.trim_end_matches('/');
+pub fn resolve_source(input: &str) -> PackageSource {
+    // Handle Version Splitting (e.g., "pkg@v1.0")
+    let (base_input, version) = if let Some((base, ver)) = input.split_once('@') {
+        (base, Some(ver.to_string()))
+    } else {
+        (input, None)
+    };
+
+    // 1. Explicit URLs
+    if base_input.starts_with("http") || base_input.starts_with("git@") || base_input.starts_with("ssh://") || base_input.starts_with("file://") {
+        let trimmed = base_input.trim_end_matches('/');
         let name = trimmed.split('/').last().unwrap_or("package").replace(".git", "");
-        return (name, input.to_string(), false);
+        return PackageSource { name, url: base_input.to_string(), version, is_official: false };
     }
 
-    let path = Path::new(input);
+    // 2. Local Paths
+    let path = Path::new(base_input);
     if path.is_absolute() || path.exists() {
         let name = path.file_name()
             .unwrap_or(std::ffi::OsStr::new("package"))
@@ -161,15 +182,17 @@ pub fn resolve_source(input: &str) -> (String, String, bool) {
             url = url[4..].to_string();
         }
 
-        return (name, url, false);
+        return PackageSource { name, url, version, is_official: false };
     }
 
-    if input.contains('/') && !input.contains('\\') {
-        let name = input.split('/').last().unwrap_or("package").to_string();
-        let url = format!("https://github.com/{}.git", input);
-        return (name, url, false);
+    // 3. GitHub Shorthand
+    if base_input.contains('/') && !base_input.contains('\\') {
+        let name = base_input.split('/').last().unwrap_or("package").to_string();
+        let url = format!("https://github.com/{}.git", base_input);
+        return PackageSource { name, url, version, is_official: false };
     }
     
-    let url = format!("https://github.com/official-finn-registry/{}.git", input);
-    (input.to_string(), url, true)
+    // 4. Registry Lookup
+    let url = format!("https://github.com/official-finn-registry/{}.git", base_input);
+    PackageSource { name: base_input.to_string(), url, version, is_official: true }
 }
