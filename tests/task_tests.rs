@@ -8,22 +8,29 @@ fn test_task_runner_basic() {
     let temp = TempDir::new().unwrap();
     let project_path = temp.path();
 
-    // Init
     Command::cargo_bin("finn").unwrap()
         .arg("init").arg(project_path.to_str().unwrap()).arg("--yes")
         .assert().success();
 
-    // Add script
     let config_path = project_path.join("finn.toml");
-    let mut config = fs::read_to_string(&config_path).unwrap();
     
-    // Cross-platform echo
+    // FIX: Overwrite the file to ensure valid TOML
     let script_cmd = if cfg!(windows) { "cmd /c echo" } else { "echo" };
-    
-    config.push_str(&format!("\n[scripts]\ngreet = \"{} Hello\"\n", script_cmd));
-    fs::write(&config_path, config).unwrap();
+    let new_config = format!(r#"
+[project]
+name = "task-test"
+version = "0.1.0"
+envpath = ".finn"
+entrypoint = "main.fin"
 
-    // Run task
+[packages]
+
+[scripts]
+greet = "{} Hello"
+"#, script_cmd);
+
+    fs::write(&config_path, new_config).unwrap();
+
     Command::cargo_bin("finn").unwrap()
         .current_dir(project_path)
         .arg("do")
@@ -43,19 +50,27 @@ fn test_task_runner_with_args() {
         .assert().success();
 
     let config_path = project_path.join("finn.toml");
-    let mut config = fs::read_to_string(&config_path).unwrap();
-    
-    // Script that echoes arguments
     let script_cmd = if cfg!(windows) { "cmd /c echo" } else { "echo" };
     
-    config.push_str(&format!("\n[scripts]\necho_args = \"{}\"\n", script_cmd));
-    fs::write(&config_path, config).unwrap();
+    let new_config = format!(r#"
+[project]
+name = "args-test"
+version = "0.1.0"
+envpath = ".finn"
+entrypoint = "main.fin"
 
-    // Run: finn do echo_args -- extra_arg
+[scripts]
+echo_args = "{}"
+"#, script_cmd);
+
+    fs::write(&config_path, new_config).unwrap();
+
+    // FIX: Add "--" before extra arguments
     Command::cargo_bin("finn").unwrap()
         .current_dir(project_path)
         .arg("do")
         .arg("echo_args")
+        .arg("--") // Required because of #[arg(last = true)]
         .arg("extra_arg")
         .assert()
         .success()
