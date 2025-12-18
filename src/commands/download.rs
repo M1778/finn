@@ -10,6 +10,7 @@ use serde_json::Value;
 pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
     let client = Client::new();
     
+    // 1. Determine Target OS/Binary Name
     let (os_keyword, binary_name) = if cfg!(target_os = "windows") {
         ("windows", "fin.exe")
     } else if cfg!(target_os = "linux") {
@@ -22,6 +23,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
 
     let pb = utils::create_spinner("Fetching release info...", ctx.quiet);
 
+    // 2. Construct GitHub API URL
     let repo_owner = "M1778M";
     let repo_name = "fin-compiler";
     
@@ -31,6 +33,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         format!("https://api.github.com/repos/{}/{}/releases/latest", repo_owner, repo_name)
     };
 
+    // 3. Query GitHub API
     let resp = client.get(&api_url)
         .header("User-Agent", "finn-cli")
         .header("Accept", "application/vnd.github+json")
@@ -39,7 +42,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
 
     if resp.status() == 404 {
         pb.finish_and_clear();
-        return Err(anyhow!("Release not found."));
+        return Err(anyhow!("Release not found.\nURL: {}\nCheck if the version tag exists.", api_url));
     }
 
     if !resp.status().is_success() {
@@ -47,6 +50,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         return Err(anyhow!("GitHub API Error: {}", resp.status()));
     }
 
+    // 4. Parse Response
     let json: Value = resp.json().context("Failed to parse GitHub API response")?;
     let tag_name = json["tag_name"].as_str().unwrap_or("unknown version");
     pb.set_message(format!("Found release: {}", tag_name));
@@ -54,6 +58,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
     let assets = json["assets"].as_array()
         .ok_or_else(|| anyhow!("Release {} has no assets attached.", tag_name))?;
 
+    // 5. Find Matching Asset
     let target_asset = assets.iter().find(|asset| {
         let name = asset["name"].as_str().unwrap_or("").to_lowercase();
         name.contains(os_keyword)
@@ -72,6 +77,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
     
     let asset_filename = asset["name"].as_str().unwrap_or("fin");
 
+    // 6. Download Binary
     pb.set_message(format!("Downloading {}...", asset_filename));
     
     let mut download_resp = client.get(download_url)
@@ -83,7 +89,8 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         return Err(anyhow!("Download failed with status: {}", download_resp.status()));
     }
 
-    let home = dirs::home_dir().ok_or(anyhow!("Could not find home directory"))?;
+    // 7. Save to ~/.finn/bin (Using utils::get_home_dir for testability)
+    let home = utils::get_home_dir()?;
     let bin_dir = home.join(".finn").join("bin");
     
     if !bin_dir.exists() {
@@ -95,6 +102,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
     
     copy(&mut download_resp, &mut dest).context("Failed to write binary to disk")?;
 
+    // 8. Set Permissions (Unix)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

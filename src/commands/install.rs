@@ -1,4 +1,5 @@
 use crate::FinnContext;
+use crate::utils; // Import utils
 use std::process::Command;
 use std::fs;
 use anyhow::{Result, anyhow};
@@ -33,7 +34,8 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
         return Err(anyhow!("Failed to build package."));
     }
 
-    let home = dirs::home_dir().ok_or(anyhow!("Could not find home directory"))?;
+    // FIX: Use utils::get_home_dir()
+    let home = utils::get_home_dir()?;
     let global_bin = home.join(".finn").join("bin");
     if !global_bin.exists() { fs::create_dir_all(&global_bin)?; }
 
