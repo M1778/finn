@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: finn
+            asset_name: finn-linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: finn.exe
+            asset_name: finn-windows
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary_name: finn
+            asset_name: finn-macos
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # --- BUILD PHASE ---
+      - name: Build Release Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # --- WINDOWS PACKAGING ---
+      - name: Package Windows Portable (ZIP)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path finn-portable
+          Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} finn-portable/
+          Copy-Item README.md finn-portable/
+          Compress-Archive -Path finn-portable/* -DestinationPath ${{ matrix.asset_name }}.zip
+
+      - name: Build Windows Installer (Inno Setup)
+        if: matrix.os == 'windows-latest'
+        uses: MinnowWare/action-iscc@v1
+        with:
+          iss_path: ./installer.iss
+      
+      - name: Rename Installer Output
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (Test-Path installer_output/finn_setup_windows.exe) {
+            Move-Item installer_output/finn_setup_windows.exe finn-setup-windows.exe
+          }
+
+      # --- UNIX PACKAGING ---
+      - name: Package Unix Portable (Tarball)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir finn-portable
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} finn-portable/
+          cp README.md finn-portable/
+          tar -czvf ${{ matrix.asset_name }}.tar.gz -C finn-portable .
+
+      # --- UPLOAD PHASE ---
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ${{ matrix.asset_name }}.zip
+            ${{ matrix.asset_name }}.tar.gz
+            finn-setup-windows.exe

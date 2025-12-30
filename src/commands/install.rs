@@ -7,7 +7,9 @@ use colored::*;
 use tempfile::TempDir;
 
 pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
-    let source = crate::commands::add::resolve_source(package_ref);
+    // Initialize Registry Client
+    let client = crate::registry::RegistryClient::new(None);
+    let source = crate::commands::add::resolve_source(package_ref, &client)?;
 
     if !source.is_official && !ctx.ignore_regulations {
         return Err(anyhow!("Security Error: Cannot install binary from unofficial source '{}' without --ignore-regulations.", source.url));

@@ -17,6 +17,10 @@ pub fn run(ctx: &FinnContext) -> Result<()> {
     let mut lock = FinnLock::load()?;
     let env_path = Path::new(&config.project.envpath);
     let packages_dir = env_path.join("packages");
+    
+    // Initialize Registry Client
+    let registry_url = config.registry.as_ref().map(|r| r.url.clone());
+    let client = crate::registry::RegistryClient::new(registry_url);
 
     if !packages_dir.exists() { fs::create_dir_all(&packages_dir)?; }
 
@@ -27,7 +31,7 @@ pub fn run(ctx: &FinnContext) -> Result<()> {
     if let Some(packages) = config.packages {
         for (name, source) in packages {
             // Resolve source to get URL/Version
-            let pkg_source = add::resolve_source(&source);
+            let pkg_source = add::resolve_source(&source, &client)?;
             
             // FIX: Capture expected checksum from lockfile BEFORE install updates it
             let expected_checksum = lock.packages.get(&name).map(|p| p.checksum.clone());
@@ -44,6 +48,7 @@ pub fn run(ctx: &FinnContext) -> Result<()> {
                 &packages_dir, 
                 &mut lock, 
                 &mut visited, 
+                &client,
                 ctx
             )?;
 

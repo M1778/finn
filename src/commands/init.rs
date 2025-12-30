@@ -57,10 +57,10 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
 
     let entrypoint = if is_binary { "main.fin" } else { "lib.fin" };
 
-    // FIX: Use FinnConfig::default() to avoid unused code warning
+    // Initialize default configuration
     let mut config = FinnConfig::default(&name);
     config.project.entrypoint = Some(entrypoint.to_string());
-    // Ensure scripts map is initialized
+    // Ensure scripts map is initialized if missing
     if config.scripts.is_none() {
         config.scripts = Some(std::collections::HashMap::new());
     }
@@ -93,14 +93,13 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
     fs::write(root.join(".gitignore"), ".finn/\nout/\n*.o\n*.exe\n")?;
 
     if use_git {
-        // Initialize
+        // Initialize git repository with initial commit
         std::process::Command::new("git")
             .arg("init")
             .current_dir(root)
             .output()
             .ok();
             
-        // Add all files
         std::process::Command::new("git")
             .arg("add")
             .arg(".")
@@ -108,7 +107,6 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
             .output()
             .ok();
             
-        // Create initial commit
         std::process::Command::new("git")
             .arg("commit")
             .arg("-m")

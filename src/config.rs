@@ -7,8 +7,14 @@ use anyhow::{Context, Result, anyhow};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FinnConfig {
     pub project: ProjectConfig,
+    pub registry: Option<RegistryConfig>, 
     pub packages: Option<HashMap<String, String>>,
     pub scripts: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RegistryConfig {
+    pub url: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,6 +34,7 @@ impl FinnConfig {
                 envpath: ".finn".to_string(),
                 entrypoint: Some("main.fin".to_string()),
             },
+            registry: None,
             packages: Some(HashMap::new()),
             scripts: Some(HashMap::new()),
         }

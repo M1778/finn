@@ -3,7 +3,8 @@ mod utils;
 mod lock;
 mod validator;
 mod cache;
-mod integrity; // NEW
+mod registry;
+mod integrity;
 mod commands {
     pub mod init;
     pub mod add;
