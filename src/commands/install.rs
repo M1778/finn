@@ -54,14 +54,17 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
 
     // The trust policy, in place of a hard refusal.
     //
-    // What was here read `if !source.is_official && !ctx.ignore_regulations`, and printed
-    // `Cannot install binary from unofficial source '<url>'`. It refused a directory the user
-    // owns, called that directory a binary, used a word both projects have banned, and refused
-    // where the agreed policy (contract §2.5) says ask -- which trained everyone to pass
-    // `--ignore-regulations`, and a flag passed reflexively protects nobody. Note also what
-    // `--ignore-regulations` no longer does: it is the package-layout check's bypass and
-    // nothing else, and it cannot switch off a trust decision. One flag for two unrelated
-    // gates was the actual defect.
+    // What was here refused every source the register had not resolved -- a directory on the
+    // user's own disk included -- on a boolean it computed itself, and against the agreed
+    // policy (contract §2.5), which says ask. [`crate::trust`]'s module documentation carries
+    // that history in full, including the sentence it printed: the module exists because of it.
+    // It is recorded there and not here because it had been restated in three files, and a fact
+    // written down three times is a fact that drifts.
+    //
+    // What is specific to this command: `--ignore-regulations` no longer takes part. It is the
+    // package-layout check's bypass and nothing else, and it cannot switch off a trust
+    // decision. One flag for two unrelated gates was the actual defect -- it trained everyone
+    // to pass it, and a flag passed reflexively protects nobody.
     let mut gate = crate::trust::TrustGate::consent(ctx);
     match gate.consider(&source.name, &source.url, &source.provenance)? {
         crate::trust::Decision::Proceed => {}

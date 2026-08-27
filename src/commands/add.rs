@@ -20,13 +20,12 @@ pub struct PackageSource {
     pub version: Option<String>,
     /// How finn came by this address.
     ///
-    /// This replaces `is_official: bool`, and the rename is the smaller half of the change.
-    /// The boolean was `true` for anything the register resolved and `false` for a URL, a
-    /// GitHub shorthand *and* a path on the user's own disk -- so its actual meaning was
-    /// "came from the register" while its name claimed a verdict, and `finn install` refused
-    /// every `false` outright. That is how installing a local directory came to print
-    /// `Cannot install binary from unofficial source '/home/me/pkg'`. A boolean has two
-    /// states and this domain has three; see [`crate::trust::Provenance`].
+    /// This replaces a `bool` whose two states could not cover three cases: an address the
+    /// register resolved, an address the user wrote out, and a path on the user's own disk.
+    /// Folding the last two together under one `false` is what made `finn install` refuse a
+    /// directory its owner had just pointed it at. [`crate::trust`]'s module documentation is
+    /// the record of the field and the message it produced; [`crate::trust::Provenance`] is the
+    /// three states that replaced it.
     pub provenance: Provenance,
 }
 
