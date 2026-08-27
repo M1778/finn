@@ -1,12 +1,12 @@
+use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use anyhow::{Result, Context};
-use sha2::{Sha256, Digest};
 use walkdir::WalkDir;
 
 pub fn calculate_package_hash(root: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
-    
+
     // Collect all entries
     let mut entries: Vec<_> = WalkDir::new(root)
         .into_iter()
@@ -18,7 +18,7 @@ pub fn calculate_package_hash(root: &Path) -> Result<String> {
 
     for entry in entries {
         let path = entry.path();
-        
+
         if path.is_dir() {
             continue;
         }
@@ -29,13 +29,14 @@ pub fn calculate_package_hash(root: &Path) -> Result<String> {
         }
 
         // Hash the relative path (so C:\Lib and /tmp/Lib produce same hash)
-        let relative_path = path.strip_prefix(root)
+        let relative_path = path
+            .strip_prefix(root)
             .unwrap_or(path)
             .to_string_lossy()
             .replace("\\", "/"); // Normalize separators
-        
+
         hasher.update(relative_path.as_bytes());
-        
+
         // Hash the file content
         let bytes = fs::read(path).with_context(|| format!("Failed to read {:?}", path))?;
         hasher.update(&bytes);

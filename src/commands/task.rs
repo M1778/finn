@@ -1,13 +1,14 @@
-use crate::config::FinnConfig;
 use crate::FinnContext;
-use std::process::Command;
+use crate::config::FinnConfig;
 use anyhow::{Result, anyhow};
 use colored::*;
+use std::process::Command;
 
 pub fn run(task_name: &str, args: Vec<String>, _ctx: &FinnContext) -> Result<()> {
     let config = FinnConfig::load()?;
 
-    let script_cmd = config.scripts
+    let script_cmd = config
+        .scripts
         .as_ref()
         .and_then(|s| s.get(task_name))
         .ok_or_else(|| anyhow!("Script '{}' not found in finn.toml", task_name))?;
@@ -29,10 +30,7 @@ pub fn run(task_name: &str, args: Vec<String>, _ctx: &FinnContext) -> Result<()>
         format!("{} {}", script_cmd, args.join(" "))
     };
 
-    let status = Command::new(shell)
-        .arg(flag)
-        .arg(&full_cmd)
-        .status()?;
+    let status = Command::new(shell).arg(flag).arg(&full_cmd).status()?;
 
     if status.success() {
         Ok(())

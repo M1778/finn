@@ -1,4 +1,3 @@
-use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -7,14 +6,14 @@ fn test_init_creates_files() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("my_project");
 
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("finn"));
-    
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("finn");
+
     cmd.arg("init")
-       .arg(path.to_str().unwrap())
-       .arg("--yes") // FIX: Skip interactive wizard
-       .assert()
-       .success()
-       .stdout(predicate::str::contains("Project 'my_project' initialized"));
+        .arg(path.to_str().unwrap())
+        .arg("--yes") // FIX: Skip interactive wizard
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Project 'my_project' initialized"));
 
     assert!(path.join("finn.toml").exists());
     assert!(path.join("src/main.fin").exists());
@@ -27,14 +26,17 @@ fn test_init_idempotency() {
     let path = temp.path();
 
     // First run
-    Command::new(assert_cmd::cargo::cargo_bin("finn"))
-        .arg("init").arg(path.to_str().unwrap())
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(path.to_str().unwrap())
         .arg("--yes") // FIX: Skip interactive wizard
-        .assert().success();
+        .assert()
+        .success();
 
     // Second run (should not fail)
-    Command::new(assert_cmd::cargo::cargo_bin("finn"))
-        .arg("init").arg(path.to_str().unwrap())
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(path.to_str().unwrap())
         .arg("--yes") // FIX: Skip interactive wizard
         .assert()
         .success()
@@ -44,12 +46,12 @@ fn test_init_idempotency() {
 #[test]
 fn test_healthcheck_fails_outside_project() {
     let temp = TempDir::new().unwrap();
-    
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("finn"));
-    
+
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("finn");
+
     cmd.current_dir(temp.path())
-       .arg("healthcheck")
-       .assert()
-       .failure() 
-       .stderr(predicate::str::contains("Failed to load configuration"));
+        .arg("healthcheck")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to load configuration"));
 }

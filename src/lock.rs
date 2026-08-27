@@ -1,8 +1,8 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct FinnLock {
@@ -15,7 +15,24 @@ pub struct LockedPackage {
     pub source: String,
     pub commit: String,
     #[serde(default)] // Allow old lockfiles to load without crashing
-    pub checksum: String, 
+    pub checksum: String,
+}
+
+impl LockedPackage {
+    /// The pin as the rest of finn spells it: `None` rather than the literal `"HEAD"`.
+    ///
+    /// The lock field is not optional, so a package with no pin is recorded as `"HEAD"`
+    /// (`add.rs`, at the end of `install_recursive`). Everything downstream expects
+    /// `Option<&str>` instead, and the cache key omits the version *entirely* when it is
+    /// `None` (`cache.rs::entry_path`) -- so handing `Some("HEAD")` back to `ensure_cached`
+    /// hashes to a different entry and quietly maintains a second clone of the same
+    /// repository. One conversion, in one place, so the trap can only be stepped in once.
+    pub fn requested_version(&self) -> Option<&str> {
+        match self.version.as_str() {
+            "HEAD" | "" => None,
+            v => Some(v),
+        }
+    }
 }
 
 impl FinnLock {
@@ -34,12 +51,22 @@ impl FinnLock {
         Ok(())
     }
 
-    pub fn update(&mut self, name: String, source: String, commit: String, version: String, checksum: String) {
-        self.packages.insert(name, LockedPackage {
-            source,
-            commit,
-            version,
-            checksum,
-        });
+    pub fn update(
+        &mut self,
+        name: String,
+        source: String,
+        commit: String,
+        version: String,
+        checksum: String,
+    ) {
+        self.packages.insert(
+            name,
+            LockedPackage {
+                source,
+                commit,
+                version,
+                checksum,
+            },
+        );
     }
 }

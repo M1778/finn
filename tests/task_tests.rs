@@ -1,22 +1,25 @@
-use assert_cmd::Command;
 use predicates::prelude::*;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_task_runner_basic() {
     let temp = TempDir::new().unwrap();
     let project_path = temp.path();
 
-    Command::cargo_bin("finn").unwrap()
-        .arg("init").arg(project_path.to_str().unwrap()).arg("--yes")
-        .assert().success();
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(project_path.to_str().unwrap())
+        .arg("--yes")
+        .assert()
+        .success();
 
     let config_path = project_path.join("finn.toml");
-    
+
     // FIX: Overwrite the file to ensure valid TOML
     let script_cmd = if cfg!(windows) { "cmd /c echo" } else { "echo" };
-    let new_config = format!(r#"
+    let new_config = format!(
+        r#"
 [project]
 name = "task-test"
 version = "0.1.0"
@@ -27,11 +30,13 @@ entrypoint = "main.fin"
 
 [scripts]
 greet = "{} Hello"
-"#, script_cmd);
+"#,
+        script_cmd
+    );
 
     fs::write(&config_path, new_config).unwrap();
 
-    Command::cargo_bin("finn").unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
         .current_dir(project_path)
         .arg("do")
         .arg("greet")
@@ -45,14 +50,18 @@ fn test_task_runner_with_args() {
     let temp = TempDir::new().unwrap();
     let project_path = temp.path();
 
-    Command::cargo_bin("finn").unwrap()
-        .arg("init").arg(project_path.to_str().unwrap()).arg("--yes")
-        .assert().success();
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(project_path.to_str().unwrap())
+        .arg("--yes")
+        .assert()
+        .success();
 
     let config_path = project_path.join("finn.toml");
     let script_cmd = if cfg!(windows) { "cmd /c echo" } else { "echo" };
-    
-    let new_config = format!(r#"
+
+    let new_config = format!(
+        r#"
 [project]
 name = "args-test"
 version = "0.1.0"
@@ -61,12 +70,14 @@ entrypoint = "main.fin"
 
 [scripts]
 echo_args = "{}"
-"#, script_cmd);
+"#,
+        script_cmd
+    );
 
     fs::write(&config_path, new_config).unwrap();
 
     // FIX: Add "--" before extra arguments
-    Command::cargo_bin("finn").unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
         .current_dir(project_path)
         .arg("do")
         .arg("echo_args")
@@ -82,11 +93,14 @@ fn test_task_runner_missing_script() {
     let temp = TempDir::new().unwrap();
     let project_path = temp.path();
 
-    Command::cargo_bin("finn").unwrap()
-        .arg("init").arg(project_path.to_str().unwrap()).arg("--yes")
-        .assert().success();
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(project_path.to_str().unwrap())
+        .arg("--yes")
+        .assert()
+        .success();
 
-    Command::cargo_bin("finn").unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
         .current_dir(project_path)
         .arg("do")
         .arg("missing_task")

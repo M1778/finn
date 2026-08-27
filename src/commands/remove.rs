@@ -1,10 +1,11 @@
-use crate::config::FinnConfig;
 use crate::FinnContext;
+use crate::config::FinnConfig;
+use crate::lock::FinnLock;
 use crate::utils;
-use std::path::Path;
-use std::fs;
 use anyhow::{Context, Result, anyhow};
 use colored::*;
+use std::fs;
+use std::path::Path;
 
 // Changed _ctx to ctx so we can use it
 pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
@@ -14,7 +15,7 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
     let mut config = FinnConfig::load()?;
 
     let package_name = if package_ref.contains('/') {
-        package_ref.split('/').last().unwrap()
+        package_ref.split('/').next_back().unwrap()
     } else {
         package_ref
     };
@@ -35,6 +36,14 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
 
     if package_dir.exists() {
         fs::remove_dir_all(&package_dir).context("Failed to delete package directory")?;
+    }
+
+    // Drop the lockfile entry too. Leaving it behind meant `finn.lock` kept naming a
+    // package that is no longer a dependency and is no longer on disk, and nothing else
+    // ever cleans it up: `finn sync` only walks finn.toml.
+    let mut lock = FinnLock::load()?;
+    if lock.packages.remove(package_name).is_some() {
+        lock.save().context("Failed to update finn.lock")?;
     }
 
     config.save()?;

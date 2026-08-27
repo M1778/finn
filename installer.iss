@@ -4,7 +4,7 @@
 #define MyAppName "Finn"
 #define MyAppVersion "0.3.0"
 #define MyAppPublisher "M1778M"
-#define MyAppURL "https://github.com/M1778M/finn"
+#define MyAppURL "https://github.com/M1778/finn"
 #define MyAppExeName "finn.exe"
 
 [Setup]

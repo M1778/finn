@@ -1,17 +1,28 @@
-use crate::config::FinnConfig;
 use crate::FinnContext;
+use crate::config::FinnConfig;
 use crate::utils;
-use std::fs;
-use std::path::Path;
 use anyhow::{Context, Result};
 use colored::*;
-use dialoguer::{theme::ColorfulTheme, Input, Select, Confirm};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
+use std::fs;
+use std::path::Path;
 
-pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option<String>, ctx: &FinnContext) -> Result<()> {
+pub fn run(
+    path: &str,
+    yes: bool,
+    name_arg: Option<String>,
+    template_arg: Option<String>,
+    ctx: &FinnContext,
+) -> Result<()> {
     let root = Path::new(path);
-    
+
     if root.join("finn.toml").exists() && !ctx.force {
-        if !ctx.quiet { println!("{} Project already initialized. Use --force to overwrite.", "[INFO]".yellow()); }
+        if !ctx.quiet {
+            println!(
+                "{} Project already initialized. Use --force to overwrite.",
+                "[INFO]".yellow()
+            );
+        }
         return Ok(());
     }
 
@@ -19,7 +30,8 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
         fs::create_dir_all(root).context("Failed to create project directory")?;
     }
 
-    let dir_name = root.canonicalize()?
+    let dir_name = root
+        .canonicalize()?
         .file_name()
         .unwrap_or(std::ffi::OsStr::new("my_project"))
         .to_string_lossy()
@@ -30,7 +42,12 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
         let t = template_arg.unwrap_or("binary".to_string());
         (n, t == "binary", true)
     } else {
-        println!("{}", "Welcome to the Finn Project Wizard \u{1F9D9}".bold().purple());
+        println!(
+            "{}",
+            "Welcome to the Finn Project Wizard \u{1F9D9}"
+                .bold()
+                .purple()
+        );
         let theme = ColorfulTheme::default();
 
         let default_input = name_arg.unwrap_or(dir_name);
@@ -66,13 +83,13 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
     }
 
     let pb = utils::create_spinner("Generating files...", ctx.quiet);
-    
+
     let toml_str = toml::to_string_pretty(&config)?;
     fs::write(root.join("finn.toml"), toml_str)?;
 
     let src_dir = root.join("src");
     fs::create_dir_all(&src_dir)?;
-    
+
     if is_binary {
         let code = r#"fun main() <noret> {
     printf("Hello from Finn!\n");
@@ -84,7 +101,10 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
 }"#;
         fs::write(src_dir.join(entrypoint), code)?;
 
-        let exports_code = format!("// Export symbols from the main library file\nexport * from \"src/{}\";", entrypoint.replace(".fin", ""));
+        let exports_code = format!(
+            "// Export symbols from the main library file\nexport * from \"src/{}\";",
+            entrypoint.replace(".fin", "")
+        );
         fs::write(root.join("exports.fin"), exports_code)?;
     }
 
@@ -99,14 +119,14 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
             .current_dir(root)
             .output()
             .ok();
-            
+
         std::process::Command::new("git")
             .arg("add")
             .arg(".")
             .current_dir(root)
             .output()
             .ok();
-            
+
         std::process::Command::new("git")
             .arg("commit")
             .arg("-m")
@@ -118,7 +138,11 @@ pub fn run(path: &str, yes: bool, name_arg: Option<String>, template_arg: Option
 
     pb.finish_and_clear();
     if !ctx.quiet {
-        println!("{} Project '{}' initialized successfully!", "\u{2728}".green(), name);
+        println!(
+            "{} Project '{}' initialized successfully!",
+            "\u{2728}".green(),
+            name
+        );
         if !is_binary {
             println!("   Created 'exports.fin' for library usage.");
         }
