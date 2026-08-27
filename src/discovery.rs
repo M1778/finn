@@ -253,9 +253,10 @@ impl Discovery {
                 if let Some(c) = cached {
                     if !self.quiet {
                         eprintln!(
-                            "{} could not read the registry pointer ({}). Using the cached \
-                             address {}{}.",
+                            "{} could not read the registry pointer {} ({:#}). Using the \
+                             cached address {}{}.",
                             "[WARN]".yellow(),
+                            self.pointer_url(),
                             e,
                             c.url,
                             match c.age() {
@@ -271,7 +272,11 @@ impl Discovery {
                     return Ok(compiled_in.to_string());
                 }
 
-                Err(self.nowhere_to_ask(&e.to_string()))
+                // `{:#}` rather than `to_string()`: `Display` for `anyhow::Error` renders only
+                // the outermost context, so the diagnosis underneath it -- "it contains no URL
+                // line -- every line is blank or a comment", the one message that tells the
+                // pointer file's author what to change -- was being dropped here.
+                Err(self.nowhere_to_ask(&format!("{e:#}")))
             }
         }
     }
@@ -284,23 +289,28 @@ impl Discovery {
     fn fetch_pointer(&self) -> Result<String> {
         let url = self.pointer_url();
 
+        // The reasons below name *what* went wrong and never *which URL*. Both callers already
+        // have the URL and both print it: repeating it here put the same address twice into a
+        // five-line error, where the second copy reads as a different one until you compare
+        // them character by character.
         let response = self
             .client
             .get(&url)
             .header("User-Agent", utils::user_agent())
             .send()
-            .with_context(|| format!("{} is unreachable", url))?;
+            .context("the host is unreachable")?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(anyhow!("{} answered {}", url, status));
+            return Err(anyhow!("it answered {}", status));
         }
 
-        let body = response
-            .text()
-            .with_context(|| format!("{} is not readable text", url))?;
+        let body = response.text().context("its body is not readable text")?;
 
-        parse_pointer(&body).with_context(|| format!("{} is not a valid pointer file", url))
+        // No context wrapper: `parse_pointer` and `validate_base_url` already say which rule
+        // broke, and "is not a valid pointer file: it contains no URL line" says the second
+        // half twice.
+        parse_pointer(&body)
     }
 
     /// The fallback index, read when the live API cannot answer.
@@ -422,7 +432,7 @@ impl Discovery {
              finn does not have one compiled in -- it reads a pointer file from the public \
              registry repository:\n\
              \x20 {}\n\
-             and that did not answer: {}.\n\
+             and that could not be read: {}.\n\
              \n\
              There is deliberately no built-in fallback address. One that answered 404 would \
              turn \"no registry has been deployed yet\" into \"the registry says your package \
@@ -896,6 +906,45 @@ mod tests {
         assert!(err.contains("no registry deployment is known"), "{}", err);
         // The rejected fallback is not quietly reintroduced.
         assert!(!err.contains("pages.dev"), "{}", err);
+    }
+
+    /// The pointer URL is named once, and the reason it failed survives to the reader.
+    ///
+    /// Two separate defects met in one message. `nowhere_to_ask` prints `pointer_url()`, and
+    /// every error `fetch_pointer` produces *also* begins with that URL -- so the address
+    /// appeared twice in a five-line error, once as the thing tried and once inside the reason,
+    /// and the second one reads as a different URL until you compare them character by
+    /// character. And `e.to_string()` on an `anyhow::Error` renders only the outermost context,
+    /// so the diagnosis underneath it -- "it contains no URL line", the message §4.1 of the
+    /// handoff says a user gets -- was dropped on the floor.
+    #[test]
+    fn the_pointer_url_is_named_once_and_the_reason_survives() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut server = mockito::Server::new();
+        let _m = server
+            .mock("GET", "/url.txt")
+            .with_status(200)
+            .with_body("# a pointer file with no URL in it yet\n\n")
+            .create();
+
+        let err = probe(&server.url(), &dir, false)
+            .resolve()
+            .expect_err("a pointer with no URL line is not an address")
+            .to_string();
+
+        let pointer = format!("{}/url.txt", server.url());
+        assert_eq!(
+            err.matches(pointer.as_str()).count(),
+            1,
+            "the pointer URL is named {} times; twice reads as two different addresses:\n{}",
+            err.matches(pointer.as_str()).count(),
+            err
+        );
+        assert!(
+            err.contains("no URL line"),
+            "the reason the pointer was rejected has to reach the person who can fix it:\n{}",
+            err
+        );
     }
 
     /// A malformed pointer is rejected rather than repaired, and rejection falls through --
