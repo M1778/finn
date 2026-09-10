@@ -7,6 +7,8 @@
 //! already sitting in the cache. These tests pin down the warm path costing nothing, the
 //! offline path working, and the one case where the lock must *not* be believed.
 
+mod common;
+
 use mockito::Server;
 use predicates::prelude::*;
 use std::fs;
@@ -60,7 +62,7 @@ fn upstream(root: &Path, name: &str) -> String {
     // The default branch stays on the first commit, so `v2` is genuinely different code.
     git(&repo, &["reset", "--hard", "HEAD~1"]);
 
-    format!("file://{}", repo.to_str().unwrap())
+    common::file_url(&repo)
 }
 
 fn init_project(root: &Path, home: &Path) -> PathBuf {

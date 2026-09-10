@@ -9,6 +9,8 @@
 //! is not allowed` -- an error naming neither the setting that caused it nor anything to do
 //! about it. `reqwest` is http(s) only and always was.
 
+mod common;
+
 use mockito::Server;
 use predicates::prelude::*;
 use std::fs;
@@ -47,7 +49,7 @@ fn upstream(root: &Path, dir: &str, pkg_name: &str) -> String {
     git(&repo, &["config", "user.name", "T"]);
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "first"]);
-    format!("file://{}", repo.to_str().unwrap())
+    common::file_url(&repo)
 }
 
 fn init_project(root: &Path, home: &Path) -> PathBuf {

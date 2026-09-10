@@ -8,6 +8,8 @@
 //! to a directory named *exactly* the registry name, because one package with two spellings
 //! is a fact finn would have invented.
 
+mod common;
+
 use mockito::Server;
 use predicates::prelude::*;
 use std::fs;
@@ -46,7 +48,7 @@ fn upstream(root: &Path, dir: &str, pkg_name: &str) -> String {
     git(&repo, &["config", "user.name", "T"]);
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "first"]);
-    format!("file://{}", repo.to_str().unwrap())
+    common::file_url(&repo)
 }
 
 fn init_project(root: &Path, home: &Path) -> PathBuf {
@@ -208,7 +210,7 @@ fn sync_warns_for_declared_dependencies_only() {
     git(&repo, &["config", "user.name", "T"]);
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "first"]);
-    let repo_url = format!("file://{}", repo.to_str().unwrap());
+    let repo_url = common::file_url(&repo);
 
     let app = init_project(root, home.path());
 

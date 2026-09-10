@@ -13,6 +13,8 @@
 //! rather than the gate's own types, because the failure mode being guarded against is a
 //! prompt that exists in the code and never reaches a person.
 
+mod common;
+
 use mockito::Server;
 use predicates::prelude::*;
 use std::fs;
@@ -53,7 +55,7 @@ fn package(root: &Path, name: &str) -> (PathBuf, String) {
     git(&repo, &["config", "user.name", "T"]);
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "first"]);
-    let url = format!("file://{}", repo.to_str().unwrap());
+    let url = common::file_url(&repo);
     (repo, url)
 }
 
@@ -587,7 +589,7 @@ fn an_unregistered_dependency_of_a_registered_package_is_refused_too() {
     git(&parent, &["config", "user.name", "T"]);
     git(&parent, &["add", "."]);
     git(&parent, &["commit", "-m", "first"]);
-    let parent_url = format!("file://{}", parent.to_str().unwrap());
+    let parent_url = common::file_url(&parent);
 
     let app = init_project(root, home.path());
     let mut server = Server::new();

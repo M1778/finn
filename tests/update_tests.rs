@@ -7,6 +7,8 @@
 //! tests pin down both halves of the fix: the warm path still does not fetch, and the two
 //! commands that are *supposed* to fetch now do.
 
+mod common;
+
 use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,7 +54,7 @@ fn upstream(root: &Path, name: &str, body: &str) -> (PathBuf, String) {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "first"]);
 
-    let url = format!("file://{}", repo.to_str().unwrap());
+    let url = common::file_url(&repo);
     (repo, url)
 }
 

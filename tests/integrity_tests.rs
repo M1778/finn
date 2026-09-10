@@ -1,3 +1,5 @@
+mod common;
+
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -158,19 +160,8 @@ fn test_repinning_a_version_updates_the_installed_tree() {
 
     // A `file://` URL rather than a bare path: `cache::ensure_cached` only honours a
     // requested version on its git-clone path, so a plain directory source cannot express
-    // a version pin at all.
-    //
-    // Built as a well-formed URL on every OS: `repo_name` splits addresses on `/` only
-    // (a backslash is a legal filename character on Unix, so it must not be a
-    // separator), and `file://C:\...` would therefore install under one mangled
-    // directory name instead of `VerLib`. Forward slashes plus the three-slash form
-    // keep the last segment the repository name on Windows and Unix alike.
-    let repo_str = repo.to_str().unwrap().replace('\\', "/");
-    let url = if repo_str.starts_with('/') {
-        format!("file://{repo_str}")
-    } else {
-        format!("file:///{repo_str}")
-    };
+    // a version pin at all. Well-formed on every OS -- see `common::file_url`.
+    let url = common::file_url(&repo);
     let lib_fin = root.join("App/.finn/packages/VerLib/lib.fin");
 
     let app = root.join("App");
