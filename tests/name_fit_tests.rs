@@ -613,8 +613,21 @@ fn a_registry_name_shadowed_by_a_local_directory_is_announced() {
             output
         );
     }
+    // Compared canonical-to-canonical: the notice prints `path_source`'s
+    // canonicalized path, and on Windows that resolves 8.3 short names
+    // (`C:\Users\RUNNER~1\...`) the harness still spells the long way
+    // (`C:\Users\runneradmin\...`), so the raw join names the same directory
+    // in a string `contains` will never find. The `\\?\` strip mirrors
+    // `path_source` exactly.
+    let taken = app.join("mylib").canonicalize().unwrap();
+    let mut taken = taken.to_string_lossy().into_owned();
+    if cfg!(windows)
+        && let Some(stripped) = taken.strip_prefix(r"\\?\")
+    {
+        taken = stripped.to_string();
+    }
     assert!(
-        output.contains(app.join("mylib").to_str().unwrap()),
+        output.contains(&taken),
         "the path taken is not named:\n{}",
         output
     );
