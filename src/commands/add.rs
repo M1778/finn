@@ -899,8 +899,9 @@ pub fn parse_source(input: &str) -> Result<Parsed> {
     // The scheme is matched *with* its `://`. Matching a bare `http` prefix instead swallowed
     // every name that merely begins with those letters -- `http-client`, `httparse`, `http2` --
     // and turned it into a direct source whose URL was the name itself, so the registry was
-    // never asked and the clone could not succeed. `http-client` is the registry's own worked
-    // example, so the most likely name to be typed was the one that could not be installed.
+    // never asked and the clone could not succeed. `http-client` can still be typed -- as a
+    // git- or path-sourced dependency name -- so the most likely such input was the one that
+    // could not be installed.
     // The scheme is matched case-insensitively *and lowercased in the URL handed to git*. That
     // is the opposite of what `crate::registry` does with the registry address, where the scheme
     // is folded for the comparison only and the user's string is requested verbatim -- and the
