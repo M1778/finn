@@ -1,12 +1,13 @@
-//! A legal registry name is not always a Fin identifier, and the user finds out at
+//! A name that is not a Fin identifier, and the user finds out at
 //! `finn add` time rather than from the compiler.
 //!
-//! `http-client` passes the registry's name rule and is its own worked example, but Fin's
-//! lexer has no hyphen: `import http-client;` reads as a subtraction of two undeclared
-//! names, and the errors it produces (`Undefined variable 'http'`) say nothing about a
-//! package. So finn says it when the name is resolved -- and, just as importantly, installs
-//! to a directory named *exactly* the registry name, because one package with two spellings
-//! is a fact finn would have invented.
+//! The register only issues Fin identifiers now, but git- and path-sourced names keep the
+//! old shapes: `http-client` still arrives that way, and Fin's lexer has no hyphen, so
+//! `import http-client;` reads as a subtraction of two undeclared names, and the errors it
+//! produces (`Undefined variable 'http'`) say nothing about a package. So finn says it when
+//! the name is resolved -- and, just as importantly, installs to a directory named *exactly*
+//! the resolved name, because one package with two spellings is a fact finn would have
+//! invented.
 
 mod common;
 
@@ -76,7 +77,8 @@ fn registry_mock(server: &mut Server, name: &str, repo_url: &str) -> mockito::Mo
 }
 
 /// A hyphenated name is warned about, the working import form is named, and the directory
-/// keeps the registry's spelling.
+/// keeps the resolved spelling. (The mock register stands in for any source here; the real
+/// register no longer issues hyphenated names, but git and path sources do.)
 #[test]
 fn a_hyphenated_name_is_warned_about_and_never_rewritten() {
     let temp = TempDir::new().unwrap();
@@ -109,7 +111,7 @@ fn a_hyphenated_name_is_warned_about_and_never_rewritten() {
 
     m.assert();
 
-    // Installed under the registry's spelling, and under no other.
+    // Installed under the resolved spelling, and under no other.
     assert!(
         app.join(".finn/packages/http-client/lib.fin").exists(),
         "the install directory must be named exactly 'http-client'"

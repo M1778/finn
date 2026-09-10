@@ -386,6 +386,16 @@ replacing them with a four-level prompt (`verified` / `trusted` / `recognized` /
 `unrecognized`, the fourth being CLI-side for "not on the register"). **That deletion
 has not happened.**
 
+**Correction 2026-09-10:** it has, with one argued exception. `is_official` is gone
+(zero matches in `src/`); the four-level prompt is built (`src/trust.rs`: `TrustGate`
+with consent/audit modes, `--verified-only` failing once over all offenders, fail-closed
+non-interactive, `--quiet`-proof refusals); `PackageMetadata` carries the wire `trust`
+object and `add.rs` rules `Register { level }` from it; `install.rs` passes the manifest
+`registry_url` like `add`/`sync`. The exception is `validator.rs`: the reply's outright
+deletion is recorded there as superseded — what was wrong was one flag bypassing two
+unrelated things, so trust consent is `--yes` in `trust.rs` and the layout check keeps
+`--ignore-regulations` as its own named bypass. Read that docblock before relitigating.
+
 **Trust is package-level on the registry side.** The `versions` table has no trust
 column. The reply's ask #3 asks for trust on version endpoints *or* a documented
 package-level guarantee, and calls it *"the only open question that changes my control
@@ -598,6 +608,11 @@ become a rejecter: it stays a warner, because git- and path-sourced dependencies
 the register and their names are still unconstrained by it — the warning's *premise* changes from
 "the register allows this but Fin cannot import it" to "the register would refuse this name, and
 locally it costs you every import form but one."
+
+**Correction 2026-09-10:** the register narrowed (server-side, contract rev 7) and finn followed
+for the comment half: `finname.rs` states the narrowed rule, `m1778` joined the list (58, diffing
+exactly against the register's denylist), and the warner premise is now "the register would refuse
+this name". Still a warner, still no rejection — git/path names are unconstrained by the register.
 
 Until that lands, three obligations still hold on finn:
 

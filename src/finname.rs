@@ -1,21 +1,22 @@
 //! Whether a package name can be spelled in Fin source, and what to write when it cannot.
 //!
-//! A legal registry name is not always a Fin identifier, and the gap is real rather than
-//! theoretical. The registry's rule is `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (length 2-64), so
-//! `http-client` is a legal package name -- and `http-client` is the register's own worked
-//! example. Fin's lexer is `ID {ALPHA}({ALPHA}|{DIGIT})*` over `ALPHA [a-zA-Z_]`
-//! (`Fin/src/lexer/lexer.l:63-64`): **no hyphen**, and `-` lexes as `MINUS`. So
-//! `import http-client;` does not fail with "bad name", it reads as a subtraction of two
-//! names nobody declared. Roughly thirty Fin keywords -- `type`, `class`, `if`, `in`, `as`,
-//! `do`, `fun`, `for`, `let`, `try`, `pub` -- also satisfy the registry's rule.
+//! The register narrowed its rule to `^[a-z][a-z0-9]*$` (length 2-64) plus a reserved-word
+//! denylist, so every name it issues is now a Fin identifier: the hyphen and keyword
+//! collisions below cannot arrive from the register anymore. This module stays a warner
+//! rather than becoming dead code for two reasons. Git- and path-sourced dependencies never
+//! pass through the register, so `http-client` still arrives that way — and Fin's lexer is
+//! `ID {ALPHA}({ALPHA}|{DIGIT})*` over `ALPHA [a-zA-Z_]` (`Fin/src/lexer/lexer.l:63-64`):
+//! **no hyphen**, and `-` lexes as `MINUS`. So `import http-client;` does not fail with
+//! "bad name", it reads as a subtraction of two names nobody declared. A name the register
+//! would refuse still gets its warning here rather than as a round trip to the server.
 //!
 //! Three things follow, and all three are finn's job rather than the registry's:
 //!
-//! 1. **The install directory is named exactly the registry name.** `http-client` is never
+//! 1. **The install directory is named exactly the resolved name.** `http-client` is never
 //!    rewritten to `http_client`. Two spellings for one package is the same class of mistake
 //!    as fabricating a version: it invents a fact and then makes the user reconcile it.
 //! 2. **The import form is chosen per name.** `import { A, B } from "<name>";` works for
-//!    every legal name, because the path is a string literal and the bound names are the
+//!    every spellable name, because the path is a string literal and the bound names are the
 //!    library's own exports. There is no aliasing escape hatch to offer instead: `KW_AS`
 //!    attaches to `module_path`, never to `STRING_LITERAL`, so `import "http-client" as hc;`
 //!    is a syntax error (`Fin/src/parser/parser.y:717`).
@@ -27,6 +28,10 @@
 /// (lines 140-220), filtered to those a registry name could actually collide with -- that
 /// is, the ones that satisfy `^[a-z][a-z0-9]*$`. `Self` (capitalised) and `as_ptr`
 /// (underscored) are excluded because no legal package name can be spelled either way.
+///
+/// This list diffs exactly against the register's reserved-word denylist, `m1778`
+/// included: it is Fin's `blame`-marker keyword (`KW_M1778`), so omitting it would let a
+/// warning go unprinted for the owner's own handle of all names.
 ///
 /// This list is a copy of another project's grammar and can therefore fall out of date. It
 /// is used only to *warn*, never to reject: a name missing from this list is at worst a
@@ -66,6 +71,7 @@ const FIN_KEYWORDS: &[&str] = &[
     "interface",
     "let",
     "long",
+    "m1778",
     "macro",
     "namespace",
     "new",
@@ -97,7 +103,8 @@ pub enum NameFit {
     /// Lexes as an `ID` and collides with nothing: every import form works.
     Identifier,
     /// Contains a character `ID` does not accept, named here so the message can point at it.
-    /// A hyphen is the case that matters in practice, because the registry allows it.
+    /// A hyphen is the case that matters in practice, because git and path sources still
+    /// allow it.
     NotAnIdentifier(char),
     /// Lexes fine but *is* a reserved word, so it can never appear where a name is expected.
     Keyword,
@@ -159,7 +166,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_hyphen_is_the_case_the_registry_actually_allows() {
+    fn a_hyphen_is_the_case_non_registry_sources_still_allow() {
         assert_eq!(classify("http-client"), NameFit::NotAnIdentifier('-'));
         let advice = import_advice("http-client").unwrap();
         assert!(advice.contains("no hyphen"), "{}", advice);
@@ -229,6 +236,16 @@ mod tests {
         let mut sorted = FIN_KEYWORDS.to_vec();
         sorted.sort_unstable();
         assert_eq!(sorted, FIN_KEYWORDS, "keep FIN_KEYWORDS sorted");
+    }
+
+    /// `m1778` is Fin's not-implemented marker keyword and the register's 58th
+    /// denylisted word. Missing it here would silence the warning for exactly the name
+    /// most likely to be tried.
+    #[test]
+    fn the_owners_handle_is_a_keyword_too() {
+        assert_eq!(classify("m1778"), NameFit::Keyword);
+        let advice = import_advice("m1778").unwrap();
+        assert!(advice.contains("reserved word"), "{}", advice);
     }
 
     #[test]
