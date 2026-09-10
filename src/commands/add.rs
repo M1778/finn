@@ -1525,7 +1525,14 @@ mod tests {
         // would be true and useless, and its advice would read `./.`. An input that is an address
         // in its own right is exempt because the notice would be false -- a directory called
         // `git@host:repo` displaces an ssh address, not a registry name.
-        for input in ["./src", "/tmp", "json", "M1778/json", ".", ".."] {
+        //
+        // The absolute-path row cannot be "/tmp": on Windows "/tmp" has no drive prefix so
+        // `Path::is_absolute` is false and it usually does not exist either, which drops it
+        // into the GitHub shorthand instead of the path arm. A temp dir is absolute and
+        // exists on all three CI OSes, so it keeps the row a path that already says so.
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_str = temp.path().to_str().unwrap();
+        for input in ["./src", temp_str, "json", "M1778/json", ".", ".."] {
             assert!(
                 parse_source(input).unwrap().notice.is_none(),
                 "{} had nothing to announce",
@@ -1545,7 +1552,13 @@ mod tests {
     /// to a different conclusion than the classifier did.
     #[test]
     fn only_a_path_source_needs_no_network() {
-        for input in ["src", "./src", "/tmp", "Cargo.toml"] {
+        // "/tmp" is not portable: on Windows it has no drive prefix so `Path::is_absolute`
+        // is false and it usually does not exist either, which drops it into the GitHub
+        // shorthand instead of the path arm. A temp dir is absolute and exists on all
+        // three CI OSes, so it keeps the absolute-path row a path on every platform.
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_str = temp.path().to_str().unwrap();
+        for input in ["src", "./src", "Cargo.toml", temp_str] {
             assert!(
                 parse_source(input).unwrap().source.is_local_path(),
                 "{} is a path on this machine",
