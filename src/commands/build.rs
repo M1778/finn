@@ -1,9 +1,11 @@
 use crate::FinnContext;
+use anyhow::Context;
 use crate::config::FinnConfig;
 use crate::finc::{Finc, Invocation, Outcome};
 use crate::utils;
 use anyhow::{Result, anyhow};
 use colored::*;
+use std::fs;
 use std::path::Path;
 
 pub fn run(args: Vec<String>, ctx: &FinnContext) -> Result<()> {
@@ -54,16 +56,19 @@ pub fn run(args: Vec<String>, ctx: &FinnContext) -> Result<()> {
                     .join(" ")
             }
         );
-        // Deliberately absent: -o. Contract 1 parses, validates and then ignores it, so
-        // passing it would only make finn look like it asked for an artifact.
-        println!(
-            "   (no -o: finc contract {} does not generate code)",
-            crate::finc::SUPPORTED_CONTRACT
-        );
+    }
+
+    let bin_name = config.project.name.clone();
+    let out_dir = Path::new("out");
+    let out_path = out_dir.join(&bin_name);
+    if !out_dir.exists() {
+        fs::create_dir(&out_dir)
+            .context("Failed to create output directory `out/`")?;
     }
 
     let mut inv = Invocation::new(&src_path)
         .libs(libs)
+        .output(&out_path)
         .passthrough(args.clone());
     for inc in includes {
         inv = inv.include(inc);
@@ -96,14 +101,19 @@ pub fn run(args: Vec<String>, ctx: &FinnContext) -> Result<()> {
                 String::new()
             }
         );
-        // Not "build successful": contract 1 has no code generation, so there is no
-        // artifact on disk and saying otherwise would be the one lie a build tool must
-        // never tell.
-        println!(
-            "   {} finc {} does not generate code yet, so no executable was produced.",
-            "note:".cyan(),
-            finc.version().semver
-        );
+        if out_path.exists() {
+            println!(
+                "{} Built executable: {}",
+                "[OK]".green(),
+                out_path.display()
+            );
+        } else {
+            return Err(anyhow!(
+                "finc accepted the source but did not write the expected binary at {}.
+                 This is a compiler bug, not a build configuration problem.",
+                out_path.display()
+            ));
+        }
     }
     Ok(())
 }

@@ -26,7 +26,7 @@ use std::process::Command;
 ///
 /// Bumped deliberately, together with the code that needs the new behaviour. A
 /// mismatch is an error with a specific remedy, never a best-effort attempt.
-pub const SUPPORTED_CONTRACT: u32 = 1;
+pub const SUPPORTED_CONTRACT: u32 = 2;
 
 /// What `finc --version` reports: `finc <semver> (contract <int>)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +106,9 @@ pub struct Invocation {
     pub includes: Vec<PathBuf>,
     pub fin_libs: Option<Vec<PathBuf>>,
     pub color: Color,
+    /// Output path for contract 2+: when set, `-o <path>` is passed to finc and
+    /// finn expects a binary at that path on success. `None` for contract 1.
+    pub output: Option<PathBuf>,
     /// Flags the user passed through, e.g. `finn build -- --debug-ast`. These can make
     /// finc exit 2, and when they do the blame goes to the user, not to version skew.
     pub passthrough: Vec<String>,
@@ -118,8 +121,14 @@ impl Invocation {
             includes: Vec::new(),
             fin_libs: None,
             color: Color::Never,
+            output: None,
             passthrough: Vec::new(),
         }
+    }
+
+    pub fn output(mut self, path: impl Into<PathBuf>) -> Self {
+        self.output = Some(path.into());
+        self
     }
 
     pub fn include(mut self, path: impl Into<PathBuf>) -> Self {
@@ -178,6 +187,10 @@ impl Invocation {
 
         for arg in &self.passthrough {
             argv.push(arg.clone().into());
+        }
+        if let Some(ref out) = self.output {
+            argv.push("-o".into());
+            argv.push(out.clone().into_os_string());
         }
         Ok(argv)
     }

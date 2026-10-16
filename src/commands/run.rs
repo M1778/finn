@@ -1,31 +1,49 @@
 use crate::FinnContext;
+use anyhow::Context;
 use crate::commands::build;
-use crate::finc::SUPPORTED_CONTRACT;
+use crate::config::FinnConfig;
 use anyhow::{Result, anyhow};
 use colored::*;
+use std::path::Path;
+use std::process::Command;
 
-/// `finn run` cannot run anything yet, and says so instead of pretending.
+/// `finn run` builds the project and executes the resulting binary.
 ///
-/// Contract 1 is explicit: `finc` has no code generation, `-o` is parsed and then
-/// ignored, and a `0` means "accepted the source" rather than "wrote a binary". The
-/// previous implementation pushed a `-r` flag at the compiler in the hope of a JIT; under
-/// contract 1 an unknown flag is exit 2, so that hope now produces a confusing failure
-/// rather than a run. This checks the source -- which is the part that does work -- and
-/// then reports the gap honestly.
+/// Contract 2: finc now produces executables via `-o`, so `finn build` produces
+/// `out/<project>` and this command runs it, forwarding any extra arguments.
 pub fn run(args: Vec<String>, ctx: &FinnContext) -> Result<()> {
+    let config = FinnConfig::load()?;
+    let bin_name = config.project.name.clone();
+    let out_path = Path::new("out").join(&bin_name);
+
+    // Build first (which now produces the binary under contract 2).
+    let build_args: Vec<String> = Vec::new();
+    build::run(build_args, ctx)?;
+
+    if !out_path.exists() {
+        return Err(anyhow!(
+            "build succeeded but no executable was produced at {}.
+             This should not happen under contract 2; please report it.",
+            out_path.display()
+        ));
+    }
+
     if !ctx.quiet {
         println!(
-            "{} finc contract {} produces no executable; checking the source instead.",
-            "[WARN]".yellow(),
-            SUPPORTED_CONTRACT
+            "{} Running {}...",
+            "[INFO]".blue(),
+            out_path.display()
         );
     }
 
-    build::run(args, ctx)?;
+    let status = Command::new(&out_path)
+        .args(&args)
+        .status()
+        .context("Failed to execute the built binary")?;
 
-    Err(anyhow!(
-        "Nothing to run: finc does not generate code yet, so `finn build` produced no \
-         executable. The source above was accepted. `finn run` will work as soon as finc \
-         emits a binary; until then this is a gap in the compiler, not in your project."
-    ))
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    Ok(())
 }
