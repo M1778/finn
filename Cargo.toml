@@ -1,6 +1,6 @@
 [package]
 name = "finn"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "The package manager for the Fin programming language."
 license = "GPL-3.0-only"

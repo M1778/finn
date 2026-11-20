@@ -9,7 +9,7 @@ Registry** is the index it asks what a bare package name means.
 
 ## What works today
 
-`finn 1.0.0` speaks `finc` contract 3, as documented in the Fin repository's
+`finn 1.0.1` speaks `finc` contract 3, as documented in the Fin repository's
 `docs/finc-interface-contract.md`:
 
 - `finn build` compiles and links the entrypoint to `out/<project>` (`.exe` on Windows).
