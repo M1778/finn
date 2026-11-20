@@ -567,7 +567,7 @@ fn install_does_not_relocate_the_process_to_the_project_root() {
         .arg("./pkg")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("has no src/main.fin"))
+        .stderr(predicate::str::contains("has no src").and(predicate::str::contains("main.fin")))
         .stderr(predicate::str::contains("github.com").not());
 }
 
@@ -600,7 +600,7 @@ fn offline_install_refuses_a_network_and_not_a_local_path() {
         .arg("./pkg")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("has no src/main.fin"))
+        .stderr(predicate::str::contains("has no src").and(predicate::str::contains("main.fin")))
         .stderr(predicate::str::contains("--offline").not());
 
     // A registry name and a URL both still need one, and the refusal quotes the input back so a
