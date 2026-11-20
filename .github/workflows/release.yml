@@ -81,19 +81,28 @@ jobs:
           Copy-Item target/${{ matrix.target }}/release/${{ matrix.binary_name }} finn-portable/
           Compress-Archive -Path finn-portable/* -DestinationPath ${{ matrix.asset }}
 
-      - name: Build Windows Installer (Inno Setup)
+      # Inno Setup is installed directly rather than through a marketplace action.
+      #
+      # `MinnowWare/action-iscc@v1` was used here and its repository was later removed, so
+      # every release job failed at "Set up job" with `Unable to resolve action` -- before a
+      # single platform built, on all five runners. A third-party action is a dependency with
+      # no lockfile; `choco install innosetup` is the same compiler on the same runner and one
+      # fewer moving part. `iscc` is on PATH after the install.
+      - name: Install Inno Setup
         if: runner.os == 'Windows'
-        uses: MinnowWare/action-iscc@v1
-        with:
-          iss_path: ./installer.iss
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
 
-      - name: Rename Installer Output
+      - name: Build Windows Installer (Inno Setup)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (Test-Path installer_output/finn_setup_windows.exe) {
-            Move-Item installer_output/finn_setup_windows.exe finn-setup-windows.exe
+          iscc installer.iss
+          if (-not (Test-Path installer_output/finn_setup_windows.exe)) {
+            Write-Error "iscc produced no installer at installer_output/finn_setup_windows.exe"
+            exit 1
           }
+          Move-Item installer_output/finn_setup_windows.exe finn-setup-windows.exe
 
       - name: Package Unix Portable (Tarball)
         if: runner.os != 'Windows'
