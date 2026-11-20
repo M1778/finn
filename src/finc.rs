@@ -1,8 +1,8 @@
 //! The `finc` invocation layer.
 //!
 //! One module owns everything finn knows about the compiler's command line, its exit
-//! codes and its JSON diagnostics, as measured in `Fin/docs/finc-interface-contract.md`
-//! at `finc 0.4.0 (contract 1)`.  Nothing outside this module builds a `finc` argv or
+//! codes and diagnostics, as measured in `Fin/docs/finc-interface-contract.md`
+//! at `finc 1.0.0 (contract 3)`.  Nothing outside this module builds a `finc` argv or
 //! reads a `finc` stream; a compiler-facing assumption that lives in one place can be
 //! corrected in one place when the contract integer moves.
 //!
@@ -12,8 +12,9 @@
 //! * **Branch on the contract integer, never on the semver.**  They move independently.
 //! * **stdout is reserved.**  Anything finc writes there is a contract violation, so it
 //!   is surfaced instead of being merged into diagnostics.
-//! * **A missing summary object means the compiler died before reporting.**  An exit
-//!   code cannot express that, so the summary is what finn checks.
+//! * **JSON checks require a summary object.** Executable builds use human diagnostics
+//!   because contract 3 refuses linking in JSON mode; their exit status and newly written
+//!   executable establish success.
 
 use anyhow::{Context, Result, anyhow};
 use colored::*;
@@ -26,7 +27,7 @@ use std::process::Command;
 ///
 /// Bumped deliberately, together with the code that needs the new behaviour. A
 /// mismatch is an error with a specific remedy, never a best-effort attempt.
-pub const SUPPORTED_CONTRACT: u32 = 2;
+pub const SUPPORTED_CONTRACT: u32 = 3;
 
 /// What `finc --version` reports: `finc <semver> (contract <int>)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,8 +76,8 @@ pub fn parse_version(line: &str) -> Result<Version> {
 /// string field would be finn's problem to strip, and asking for it serves nobody.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
-    // Contract 1 defines --color=auto|always|never; `as_flag` implements all three.
-    // Only `Never` is constructed today because every finn invocation asks for JSON.
+    // Contract defines --color=auto|always|never; `as_flag` implements all three.
+    // Only `Never` is constructed today so diagnostics remain readable when captured.
     #[allow(dead_code)]
     Auto,
     #[allow(dead_code)]
@@ -106,8 +107,8 @@ pub struct Invocation {
     pub includes: Vec<PathBuf>,
     pub fin_libs: Option<Vec<PathBuf>>,
     pub color: Color,
-    /// Output path for contract 2+: when set, `-o <path>` is passed to finc and
-    /// finn expects a binary at that path on success. `None` for contract 1.
+    /// Output path: `build` passes `-o <path>` with human diagnostics and validates
+    /// the executable on success. Frontend checks omit this path.
     pub output: Option<PathBuf>,
     /// Flags the user passed through, e.g. `finn build -- --debug-ast`. These can make
     /// finc exit 2, and when they do the blame goes to the user, not to version skew.
@@ -153,8 +154,12 @@ impl Invocation {
     /// a parseable error for a bad *input path* is exactly the case where finn most needs
     /// one.
     fn argv(&self) -> Result<Vec<OsString>> {
+        self.argv_for("json")
+    }
+
+    fn argv_for(&self, diagnostics: &str) -> Result<Vec<OsString>> {
         let mut argv: Vec<OsString> = Vec::new();
-        argv.push("--diagnostics=json".into());
+        argv.push(format!("--diagnostics={diagnostics}").into());
         argv.push(self.color.as_flag().into());
         argv.push(self.input.clone().into_os_string());
 
@@ -252,7 +257,7 @@ impl Default for Severity {
 pub struct Diagnostic {
     #[serde(default)]
     pub severity: Severity,
-    /// Always null in contract 1; reserved for named, suppressible diagnostics.
+    /// Deliberately always null today; reserved for named, suppressible diagnostics.
     #[serde(default)]
     pub code: Option<String>,
     #[serde(default)]
@@ -264,8 +269,8 @@ pub struct Diagnostic {
     pub line: u32,
     #[serde(default)]
     pub column: u32,
-    // Contract 1 diagnostic fields; parsed now so the JSONL round-trips, read once
-    // finn renders the span rather than just `file:line:column`.
+    // Span fields; parsed now so the JSONL round-trips, read once finn renders the span
+    // rather than just `file:line:column`.
     #[serde(default, rename = "endLine")]
     #[allow(dead_code)]
     pub end_line: u32,
@@ -333,7 +338,7 @@ pub struct Summary {
     pub errors: u32,
     #[serde(default)]
     pub warnings: u32,
-    // Contract 1 summary fields. finn derives the outcome from the process exit status,
+    // Contract summary fields. finn derives the outcome from the process exit status,
     // so these are finc's own claim, kept for the same cross-check the errors/warnings
     // pair above already gets.
     #[serde(default, rename = "exitCode")]
@@ -347,8 +352,7 @@ pub struct Summary {
 /// What the exit code meant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// `0` -- the source was accepted with zero diagnostics. Note that under contract 1
-    /// this does **not** mean a binary was written.
+    /// `0` -- the source was accepted. Executable builds also validate the output file.
     Accepted,
     /// `1` -- the source was rejected. Show the user the diagnostics.
     Rejected,
@@ -357,8 +361,44 @@ pub enum Outcome {
     BadInvocation,
     /// `3` -- the compiler itself failed. A finc bug; never blame the source.
     CompilerBug,
-    /// A code contract 1 does not define, or death by signal (`None`).
+    /// A code the contract does not define, or death by signal (`None`).
     Unexpected(Option<i32>),
+}
+
+impl Outcome {
+    fn from_status(status: std::process::ExitStatus) -> Self {
+        match status.code() {
+            Some(0) => Outcome::Accepted,
+            Some(1) => Outcome::Rejected,
+            Some(2) => Outcome::BadInvocation,
+            Some(3) => Outcome::CompilerBug,
+            other => Outcome::Unexpected(other),
+        }
+    }
+
+    pub fn into_result(self, what: &str) -> Result<()> {
+        match self {
+            Outcome::Accepted => Ok(()),
+            Outcome::Rejected => Err(anyhow!("{what} was rejected by finc")),
+            Outcome::BadInvocation => Err(anyhow!(
+                "finc rejected the command line finn built for {what} (exit 2). This is a \
+                 finn bug or a finc/finn version mismatch, not a problem with your source. \
+                 Run `finn healthcheck` to see which finc is in use."
+            )),
+            Outcome::CompilerBug => Err(anyhow!(
+                "finc itself failed while compiling {what} (exit 3). This is a bug in finc, \
+                 not in your source. Please report it with the diagnostics above."
+            )),
+            Outcome::Unexpected(None) => Err(anyhow!(
+                "finc was killed by a signal while compiling {what}"
+            )),
+            Outcome::Unexpected(Some(code)) => Err(anyhow!(
+                "finc exited {code}, which contract {SUPPORTED_CONTRACT} does not define. \
+                 finn understands 0, 1, 2 and 3; this build of finc may implement a newer \
+                 contract than this build of finn."
+            )),
+        }
+    }
 }
 
 /// Everything one `finc` run produced.
@@ -447,7 +487,7 @@ impl Report {
 
         if !self.unparsed.is_empty() {
             eprintln!(
-                "{} finc wrote {} line(s) to stderr that are not contract-1 JSON:",
+                "{} finc wrote {} line(s) to stderr that are not compiler JSON:",
                 "[WARN]".yellow(),
                 self.unparsed.len()
             );
@@ -496,8 +536,7 @@ impl Report {
     /// assigns it. `Ok(())` only for a clean acceptance.
     pub fn into_result(self, what: &str) -> Result<()> {
         match &self.outcome {
-            Outcome::Accepted if !self.truncated() => Ok(()),
-            Outcome::Accepted => Err(anyhow!(
+            Outcome::Accepted if !self.accepted() => Err(anyhow!(
                 "finc exited 0 for {what} but never wrote its summary line, so it did not \
                  finish its run. Treating this as a compiler failure rather than a success."
             )),
@@ -509,23 +548,7 @@ impl Report {
                     if n == 1 { "" } else { "s" }
                 ))
             }
-            Outcome::BadInvocation => Err(anyhow!(
-                "finc rejected the command line finn built for {what} (exit 2). This is a \
-                 finn bug or a finc/finn version mismatch, not a problem with your source. \
-                 Run `finn healthcheck` to see which finc is in use."
-            )),
-            Outcome::CompilerBug => Err(anyhow!(
-                "finc itself failed while compiling {what} (exit 3). This is a bug in finc, \
-                 not in your source. Please report it with the diagnostics above."
-            )),
-            Outcome::Unexpected(None) => Err(anyhow!(
-                "finc was killed by a signal while compiling {what}"
-            )),
-            Outcome::Unexpected(Some(code)) => Err(anyhow!(
-                "finc exited {code}, which contract {SUPPORTED_CONTRACT} does not define. \
-                 finn understands 0, 1, 2 and 3; this build of finc may implement a newer \
-                 contract than this build of finn."
-            )),
+            _ => self.outcome.into_result(what),
         }
     }
 }
@@ -545,6 +568,16 @@ impl Finc {
     }
 
     pub fn at(path: PathBuf) -> Result<Finc> {
+        // `which` both locates a bare name and returns an absolute path, but it does not
+        // resolve symlinks. It must: contract 3 finds the bundled stdlib at
+        // `<executable>/../lib/std`, and `stdlib_dir` is derived from this path. Naming any
+        // library path makes finc skip its own default, so a symlinked finc -- what
+        // `~/.finn/bin/finc` and a distro `/usr/bin/finc` both are -- would otherwise lose
+        // the standard library entirely.
+        let path = which::which(&path)
+            .with_context(|| format!("failed to locate compiler {}", path.display()))?
+            .canonicalize()
+            .with_context(|| format!("failed to resolve compiler {}", path.display()))?;
         let out = Command::new(&path)
             .arg("--version")
             .output()
@@ -595,21 +628,41 @@ impl Finc {
         &self.version
     }
 
+    fn command(&self, inv: &Invocation, argv: Vec<OsString>) -> Command {
+        let mut cmd = Command::new(&self.path);
+        cmd.args(argv);
+        if inv.fin_libs.is_some() {
+            cmd.env_remove("FIN_LIBS");
+        }
+        cmd
+    }
+
+    pub fn build(&self, inv: &Invocation) -> Result<Outcome> {
+        let output = inv
+            .output
+            .as_ref()
+            .ok_or_else(|| anyhow!("an executable build requires an output path"))?;
+        let status = self
+            .command(inv, inv.argv_for("human")?)
+            .status()
+            .with_context(|| format!("failed to execute {}", self.path.display()))?;
+        let outcome = Outcome::from_status(status);
+        if outcome == Outcome::Accepted && !output.is_file() {
+            return Err(anyhow!(
+                "finc accepted the source but did not write the expected binary at {}. \
+                 This is a compiler bug, not a build configuration problem.",
+                output.display()
+            ));
+        }
+        Ok(outcome)
+    }
+
     /// Runs finc over one input and parses the JSONL it writes to stderr.
     ///
     /// Errs only when the process could not be run at all; a compiler that rejected the
     /// source, or crashed, is a successful `Report` describing that.
     pub fn check(&self, inv: &Invocation) -> Result<Report> {
-        let argv = inv.argv()?;
-        let mut cmd = Command::new(&self.path);
-        cmd.args(&argv);
-
-        // `--fin-libs` replaces `$FIN_LIBS` per the contract. Clearing the variable as
-        // well costs nothing and means a pinned build stays pinned even if that promise
-        // is ever weakened -- hermeticity is the whole reason finn passes the flag.
-        if inv.fin_libs.is_some() {
-            cmd.env_remove("FIN_LIBS");
-        }
+        let mut cmd = self.command(inv, inv.argv()?);
 
         let out = cmd
             .output()
@@ -646,13 +699,7 @@ impl Finc {
             }
         }
 
-        let outcome = match out.status.code() {
-            Some(0) => Outcome::Accepted,
-            Some(1) => Outcome::Rejected,
-            Some(2) => Outcome::BadInvocation,
-            Some(3) => Outcome::CompilerBug,
-            other => Outcome::Unexpected(other),
-        };
+        let outcome = Outcome::from_status(out.status);
 
         Ok(Report {
             outcome,

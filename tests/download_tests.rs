@@ -52,7 +52,7 @@ fn fixture_archive(dir: &Path, name: &str) -> (PathBuf, String, u64) {
     let finc = stage.join("bin").join("finc");
     fs::write(
         &finc,
-        "#!/usr/bin/env python3\nimport sys\nif \"--version\" in sys.argv:\n    print(\"finc 0.4.0 (contract 1)\")\n    sys.exit(0)\nsys.exit(0)\n",
+        "#!/usr/bin/env python3\nimport sys\nif \"--version\" in sys.argv:\n    print(\"finc 0.4.0 (contract 3)\")\n    sys.exit(0)\nsys.exit(0)\n",
     )
     .unwrap();
     let mut perms = fs::metadata(&finc).unwrap().permissions();
@@ -137,7 +137,7 @@ fn a_matching_archive_is_verified_unpacked_and_found_again() {
         .arg("download")
         .assert()
         .success()
-        .stdout(predicate::str::contains("finc 0.4.0 (contract 1)"));
+        .stdout(predicate::str::contains("finc 0.4.0 (contract 3)"));
 
     // The version lives in the directory name because the archive deliberately has no
     // version directory inside it.
@@ -167,7 +167,7 @@ fn a_matching_archive_is_verified_unpacked_and_found_again() {
         .arg("healthcheck")
         .assert()
         .success()
-        .stdout(predicate::str::contains("finc 0.4.0 (contract 1)"))
+        .stdout(predicate::str::contains("finc 0.4.0 (contract 3)"))
         .stdout(predicate::str::contains("lib/std"));
 }
 

@@ -9,15 +9,17 @@ Registry** is the index it asks what a bare package name means.
 
 ## What works today
 
-`finn 0.4.0` speaks `finc` contract 1, and contract 1 has **no code generation**: `finc` accepts
-or rejects source and never writes a binary, as documented in the Fin repository's
-`docs/finc-interface-contract.md`. So:
+`finn 0.4.0` speaks `finc` contract 3, as documented in the Fin repository's
+`docs/finc-interface-contract.md`:
 
-- `finn build` type-checks the entrypoint and reports finc's diagnostics. No executable is produced.
-- `finn test` type-checks every `.fin` file under `tests/`. Nothing is executed.
-- `finn run` type-checks and then **exits with an error**, because there is nothing to run.
-- `finn install` clones a package and type-checks it, then **exits with an error**, because there
-  is no binary to place in `~/.finn/bin`.
+- `finn build` compiles and links the entrypoint to `out/<project>` (`.exe` on Windows).
+- `finn run -- <args>` builds and executes it, forwarding arguments and the program's exit code.
+- `finn test` compiles and executes every `.fin` program under `tests/`. `--check` only type-checks.
+- `finn install <package>` builds a package and installs its executable into `~/.finn/bin`.
+
+Executable builds require a `finc` with the LLVM backend and a C linker driver (`cc` on Unix,
+`clang` on Windows, or the executable selected by `FIN_CC`). Compiler and linker diagnostics
+are shown directly: contract 3 reserves JSON diagnostics for checks and object builds.
 
 Dependency resolution, `finn.lock`, the package cache and the integrity check do not depend on
 code generation and work now.
@@ -85,10 +87,39 @@ checksum, so an unchanged `finn.toml` costs no registry requests.
 ### Building and testing
 
 ```bash
-finn build         # type-check src/<entrypoint>
-finn test          # type-check tests/**/*.fin
+finn build         # compile and link src/<entrypoint>
+finn build -- -O2  # pass compiler optimization flags through
+finn run -- hello  # build and run with a program argument
+finn test          # compile and execute tests/**/*.fin
+finn test --check  # type-check test files without executing them
 finn healthcheck   # report project, compiler, stdlib and which declared packages are installed
 ```
+
+Each build compiles once into a temporary directory under `out/` and replaces the executable
+only after success. A failed build preserves the previous executable; `finn run` exits on that
+failure without running the older file. `finn build` always produces an executable; use `finc -c` directly for object files.
+
+Each test file is a standalone Fin program with `main`. Tests run from the project root in
+sorted path order; a failed compilation or nonzero program exit makes the command fail.
+Temporary test executables are removed afterwards. `--check` also accepts library files
+without `main` and explicitly reports that they were not executed.
+
+### Installing a command
+
+```bash
+finn install <package>          # registry name, git URL, or local repository
+finn install ./tool --offline   # a local repository and available dependencies
+finn install <package> --force  # replace an existing installed executable
+```
+
+Installation reads the package's `finn.toml`, synchronizes its declared dependencies, and
+builds `src/<entrypoint>`. A repository without a manifest uses `src/main.fin` and its
+repository name. The executable is installed as `~/.finn/bin/<project>` (`.exe` on Windows);
+add that directory to `PATH` to run it by name. Existing commands require `--force` and
+remain intact if compilation or linking fails. Installation does not execute the package.
+Names must be single portable filenames, and the entrypoint must name a file inside the
+package. Installation refuses symlinks in its manifest, lockfile, build directory, and
+dependency write paths before modifying them.
 
 ### Tasks
 

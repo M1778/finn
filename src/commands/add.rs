@@ -242,6 +242,8 @@ pub fn install_recursive(
     if session.visited.contains(name) {
         return Ok(());
     }
+    utils::require_file_name(name).context("invalid package name")?;
+    let install_path = utils::require_local_path(packages_dir, Path::new(name))?;
     session.visited.insert(name.to_string());
 
     let pb = utils::create_spinner(&format!("Installing {}...", name), ctx.quiet);
@@ -274,8 +276,6 @@ pub fn install_recursive(
     // tree and confirms it, which is how an integrity system ends up agreeing about the
     // wrong code. So the directory is only reusable when its contents are byte-identical
     // to what was just resolved into the cache.
-    let install_path = packages_dir.join(name);
-
     if install_path.exists() {
         let reusable = !ctx.force
             && match (

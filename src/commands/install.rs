@@ -1,19 +1,15 @@
 use crate::FinnContext;
-use crate::finc::{Finc, Invocation, SUPPORTED_CONTRACT};
-use anyhow::{Result, anyhow};
+use crate::commands::{build, sync};
+use crate::config::FinnConfig;
+use crate::finc::Finc;
+use crate::utils;
+use anyhow::{Context, Result, anyhow};
 use colored::*;
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// `finn install` fetches a package and checks that it compiles -- and then stops,
-/// because there is nothing to install.
-///
-/// Two things changed here. The old implementation ran `python <compiler> src/main.fin -o
-/// <name>`: the compiler is a C++ binary called `finc`, never a Python script, and the
-/// `pyprototype` directory is not a fallback for it. And `-o` is accepted and ignored by
-/// contract 1, so even the correct invocation produces no binary to copy into
-/// `~/.finn/bin`. Reporting that is the honest behaviour; copying a file that was never
-/// written is not.
 pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
     // A `[registry].url` in the project's `finn.toml` is the address the user chose, and it
     // outranks discovery -- but this command was passing `None`, so `finn install` inside a
@@ -81,7 +77,7 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
     }
 
     let temp_dir = TempDir::new()?;
-    let repo_path = temp_dir.path().join(&source.name);
+    let repo_path = temp_dir.path().join("package");
 
     let clone = Command::new("git")
         .arg("clone")
@@ -112,28 +108,83 @@ pub fn run(package_ref: &str, ctx: &FinnContext) -> Result<()> {
         }
     }
 
-    let entry = repo_path.join("src").join("main.fin");
-    if !entry.exists() {
+    let manifest = utils::require_local_path(&repo_path, Path::new("finn.toml"))?;
+    let config = if manifest.exists() {
+        FinnConfig::from_file(&manifest)?
+    } else {
+        FinnConfig::default(&source.name)
+    };
+    // The entrypoint is a path out of an untrusted manifest like every other one guarded
+    // below, and it is the one that names *what gets compiled*. Left unguarded, an absolute
+    // or `../` spelling made finn build and install a file from outside the clone.
+    let entrypoint = config.project.entrypoint.as_deref().unwrap_or("main.fin");
+    utils::require_file_name(entrypoint).context("invalid entrypoint")?;
+    let entry = Path::new("src").join(entrypoint);
+    if !repo_path.join(&entry).is_file() {
         return Err(anyhow!(
-            "{} has no src/main.fin, so it is not an installable binary package.",
-            source.name
+            "{} has no {}, so it is not an installable binary package.",
+            source.name,
+            entry.display()
+        ));
+    }
+    let name = &config.project.name;
+    utils::require_file_name(name).context("invalid executable name")?;
+    utils::require_local_path(
+        &repo_path,
+        &Path::new(&config.project.envpath).join("packages"),
+    )?;
+    for relative in ["out", "finn.lock"] {
+        utils::require_local_path(&repo_path, Path::new(relative))?;
+    }
+
+    let destination_dir = utils::finn_home()?.join("bin");
+    let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let destination = destination_dir.join(&binary_name);
+    if destination.try_exists()? && !ctx.force {
+        return Err(anyhow!(
+            "{} already exists; use --force to replace it",
+            destination.display()
         ));
     }
 
-    if !ctx.quiet {
-        println!("   Checking...");
+    if !manifest.exists() {
+        fs::write(&manifest, toml::to_string(&config)?)?;
     }
-
     let finc = Finc::discover()?;
-    let report = finc.check(&Invocation::new(&entry))?;
-    report.render(ctx.verbose);
-    report.into_result(&format!("{} (src/main.fin)", source.name))?;
+    let original_dir = std::env::current_dir()?;
+    std::env::set_current_dir(&repo_path)?;
+    let built = (|| {
+        if config
+            .packages
+            .as_ref()
+            .is_some_and(|packages| !packages.is_empty())
+        {
+            sync::run(ctx)?;
+        }
+        build::project(&config, &finc, Vec::new(), ctx).map(|artifact| repo_path.join(artifact))
+    })();
+    std::env::set_current_dir(original_dir).context("Failed to restore the working directory")?;
+    let artifact = built?;
 
-    Err(anyhow!(
-        "'{}' compiles, but cannot be installed: finc contract {} generates no code, so no \
-         executable exists to place in ~/.finn/bin. This will work as soon as finc emits a \
-         binary.",
-        source.name,
-        SUPPORTED_CONTRACT
-    ))
+    fs::create_dir_all(&destination_dir)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".finn-install-")
+        .tempdir_in(&destination_dir)?;
+    let staged_path = staging.path().join(&binary_name);
+    fs::copy(&artifact, &staged_path).context("Failed to stage the installed executable")?;
+    let staged = tempfile::TempPath::from_path(staged_path);
+    if ctx.force {
+        staged.persist(&destination)
+    } else {
+        staged.persist_noclobber(&destination)
+    }
+    .with_context(|| format!("Failed to install executable {}", destination.display()))?;
+    if !ctx.quiet {
+        println!(
+            "{} Installed executable: {}",
+            "[OK]".green(),
+            destination.display()
+        );
+    }
+    Ok(())
 }

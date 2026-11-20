@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 /// finn's own version, from the one place it is written down.
@@ -54,6 +54,65 @@ pub fn get_home_dir() -> Result<PathBuf> {
 /// `~/.finn`, the root of everything finn installs.
 pub fn finn_home() -> Result<PathBuf> {
     Ok(get_home_dir()?.join(".finn"))
+}
+
+pub fn require_file_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.contains(['/', '\\', ':'])
+        || name.ends_with(['.', ' '])
+        || !matches!(
+            Path::new(name).components().next(),
+            Some(Component::Normal(_))
+        )
+    {
+        return Err(anyhow!(
+            "invalid file name {name:?}: expected one portable file name"
+        ));
+    }
+    Ok(())
+}
+
+pub fn require_local_path(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let root = root.canonicalize()?;
+    let mut path = root.clone();
+    for component in relative.components() {
+        match component {
+            Component::Normal(name) => {
+                if let Some(name) = name.to_str() {
+                    require_file_name(name)?;
+                }
+                path.push(name);
+            }
+            Component::CurDir => continue,
+            _ => {
+                return Err(anyhow!(
+                    "{} must stay inside {}",
+                    relative.display(),
+                    root.display()
+                ));
+            }
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(anyhow!(
+                        "refusing to write through symbolic link {}",
+                        path.display()
+                    ));
+                }
+                if !path.canonicalize()?.starts_with(&root) {
+                    return Err(anyhow!(
+                        "{} must stay inside {}",
+                        path.display(),
+                        root.display()
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(path)
 }
 
 /// `~/.finn/toolchains`, one directory per installed finc version.
@@ -137,9 +196,10 @@ pub fn find_compiler() -> Result<String> {
 /// The standard library that ships beside a given `finc`.
 ///
 /// A release archive unpacks to `bin/finc` and `lib/std`, so the stdlib is `../lib/std`
-/// from the binary. finc does not resolve this itself yet -- contract 1 says an installed
-/// finc searches `tests/samples/stdlib`, a path from the compiler's own source tree --
-/// so finn resolves it and passes it explicitly.
+/// from the binary -- the same rule contract 3 gives finc. finn passes it explicitly
+/// because naming any library path displaces finc's own default, so a build that pins its
+/// dependencies must name the stdlib too or lose it. `finc` is canonicalized in
+/// [`crate::finc::Finc::at`], which is what makes a symlinked compiler land here.
 pub fn stdlib_dir(finc: &Path) -> Option<PathBuf> {
     let root = finc.parent()?.parent()?;
     let std_dir = root.join("lib").join("std");
@@ -148,14 +208,14 @@ pub fn stdlib_dir(finc: &Path) -> Option<PathBuf> {
 
 /// The module search environment for a build of this project.
 ///
-/// Returned as (`-I` paths, `--fin-libs` paths) because contract 1 gives them different
+/// Returned as (`-I` paths, `--fin-libs` paths) because contract 3 gives them different
 /// precedence: `-I` first, then the library set. The project's own sources therefore
 /// shadow a dependency, and a dependency shadows the standard library.
 ///
-/// Note the over-approximation on packages: contract 1 documents both flags as "module
-/// search path" but not how a module name maps to a path inside one, so finn passes both
-/// the packages directory and each package root rather than guessing which one finc
-/// walks. See the report accompanying this change.
+/// Note the over-approximation on packages: the contract documents module-name-to-path
+/// resolution inside a search path, but finn passes both the packages directory and each
+/// package root rather than picking one layout. Both spellings resolve, and the extra
+/// path costs a lookup that misses.
 pub fn project_environment(envpath: &str, finc: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut includes = Vec::new();
     let src = PathBuf::from("src");

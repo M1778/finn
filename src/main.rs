@@ -122,7 +122,11 @@ enum Commands {
     Install {
         package: String,
     },
-    Test,
+    Test {
+        /// Type-check test files without building or executing them
+        #[arg(long)]
+        check: bool,
+    },
     Download {
         version: Option<String>,
     },
@@ -186,13 +190,13 @@ fn main() {
         Commands::Add { package } => commands::add::run(&package, &ctx),
         Commands::Remove { package } => commands::remove::run(&package, &ctx),
         Commands::Run { args } => commands::run::run(args, &ctx),
-        Commands::Build { args } => commands::build::run(args, &ctx),
+        Commands::Build { args } => commands::build::run(args, &ctx).map(|_| ()),
         Commands::Healthcheck => commands::healthcheck::run(&ctx),
         Commands::Sync => commands::sync::run(&ctx),
         Commands::Update { package } => commands::update::run(package, &ctx),
         Commands::Clean { cache } => commands::clean::run(cache, &ctx),
         Commands::Install { package } => commands::install::run(&package, &ctx),
-        Commands::Test => commands::test::run(&ctx),
+        Commands::Test { check } => commands::test::run(check, &ctx),
         Commands::Download { version } => commands::download::run(version, &ctx),
         Commands::Do { task, args } => commands::task::run(&task, args, &ctx),
     };
