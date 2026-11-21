@@ -31,8 +31,12 @@ jobs:
     - name: Check Formatting
       run: cargo fmt -- --check
 
+    - name: Check every source file carries the project header
+      shell: bash
+      run: python3 scripts/fin_header.py --repo finn --license MIT --check src tests build.rs
+
     - name: Lint with Clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
 
     - name: Build
       run: cargo build --verbose
