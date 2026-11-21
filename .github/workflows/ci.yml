@@ -118,8 +118,17 @@ jobs:
         BIN=target/release/finn
         [ -f "$BIN.exe" ] && BIN="$BIN.exe"
         "$BIN" download
-        FINC="$FINN_TEST_HOME/.finn/toolchains"/*/bin/finc
-        [ -f "$FINC" ] || FINC="$FINN_TEST_HOME/.finn/toolchains"/*/bin/finc.exe
+        # A glob does not expand inside an assignment, so `FINC="$dir"/*/bin/finc` stores the
+        # literal pattern and every later use fails with "No such file or directory" -- which
+        # is what all three lanes did on their first real run. `find` is the portable way to
+        # name the one installed binary, and it works for `finc` and `finc.exe` alike.
+        FINC="$(find "$FINN_TEST_HOME/.finn/toolchains" -maxdepth 3 -type f \( -name finc -o -name finc.exe \) | head -1)"
+        if [ -z "$FINC" ]; then
+          echo "::error::finn download reported success but there is no bin/finc under $FINN_TEST_HOME/.finn/toolchains"
+          find "$FINN_TEST_HOME/.finn/toolchains" -type f | head -20
+          exit 1
+        fi
+        echo "using $FINC"
         "$FINC" --version
         # A compiler that runs but cannot build is not installed. Build one program.
         printf 'fun main() <noret> { printf("release smoke\\n"); }\n' > smoke.fin
