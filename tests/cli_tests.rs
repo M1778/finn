@@ -78,3 +78,37 @@ fn test_healthcheck_fails_outside_project() {
         .failure()
         .stderr(predicate::str::contains("Failed to load configuration"));
 }
+
+#[test]
+fn test_with_no_test_files_is_not_a_pass() {
+    // `finn test` on a project whose tests/ directory is empty reported
+    //   [WARN] No .fin files under 'tests'. Nothing to test.
+    // and exited 0. A CI job that runs `finn test` therefore went green having executed
+    // nothing, which is the same failure as a linter that reports no problems because it
+    // could not find its compiler: the tool said "fine" about work it did not do.
+    //
+    // A test command that found no tests is a configuration error -- the directory is
+    // missing, or named something else, or the files are not where this repository puts
+    // them. Exiting non-zero is what makes a misconfigured CI fail on its first run
+    // instead of passing for months.
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("NoTests");
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .arg("init")
+        .arg(project.to_str().unwrap())
+        .arg("--yes")
+        .assert()
+        .success();
+    std::fs::create_dir_all(project.join("tests")).unwrap();
+
+    assert_cmd::cargo::cargo_bin_cmd!("finn")
+        .current_dir(&project)
+        .arg("test")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no .fin files under 'tests'")
+                .or(predicate::str::contains("No .fin files under 'tests'")),
+        )
+        .stderr(predicate::str::contains("Nothing to test"));
+}

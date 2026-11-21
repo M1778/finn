@@ -52,13 +52,18 @@ pub fn run(check_only: bool, ctx: &FinnContext) -> Result<()> {
     }
     files.sort();
     if files.is_empty() {
-        if !ctx.quiet {
-            println!(
-                "{} No .fin files under 'tests'. Nothing to test.",
-                "[WARN]".yellow()
-            );
-        }
-        return Ok(());
+        // Not a pass. A test command that found no tests is a configuration error -- the
+        // directory is missing, named something else, or the files are not where this
+        // project puts them -- and exiting 0 tells a CI job that work was done which was
+        // not. That is the same failure as a linter reporting a clean file because it
+        // could not find its compiler.
+        return Err(anyhow!(
+            "No .fin files under 'tests'. Nothing to test.\n\
+             This is an error rather than a pass: a CI job that runs `finn test` with an \
+             empty or absent tests/ directory would otherwise go green having executed \
+             nothing.\n\
+             Create tests/*.fin, or point the script at the directory that holds them."
+        ));
     }
 
     let finc = Finc::discover()?;
