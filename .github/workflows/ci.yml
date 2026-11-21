@@ -115,7 +115,10 @@ jobs:
         FINN_TEST_HOME: ${{ runner.temp }}/finn-home
       run: |
         set -eu
-        BIN=target/release/finn
+        # Absolute: this script `cd`s into the generated project later, and a relative path
+        # stops resolving at that point. That is exactly how the first run of this job failed
+        # on all three platforms, after the download and `init` had both succeeded.
+        BIN="$PWD/target/release/finn"
         [ -f "$BIN.exe" ] && BIN="$BIN.exe"
         "$BIN" download
         # A glob does not expand inside an assignment, so `FINC="$dir"/*/bin/finc` stores the
