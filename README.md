@@ -44,8 +44,33 @@ finn --version
 3. `~/.finn/bin/finc`
 4. `$PATH`
 
-`finn download` fetches a finc release archive into `~/.finn/toolchains/`. It refuses any archive
-the published version index gives no SHA-256 for, and refuses one whose bytes do not match.
+`finn download` installs a `finc` toolchain into `~/.finn/toolchains/`. There are two routes,
+and it tells you which one it took:
+
+```bash
+finn download                # newest published release for this machine
+finn download 1.0.1          # a specific version (the leading v is optional)
+finn download --source       # build from the Fin repository instead
+finn download --source --git-ref v1.0.1   # ... a specific revision
+```
+
+The release route reads the version index each release publishes, refuses any archive the
+index gives no SHA-256 for, and refuses one whose bytes do not match. It then runs the
+installed `finc --version` and **removes the toolchain if the binary cannot answer**: a
+compiler that crashes before `main` must not be left where the next `finn build` will pick
+it up.
+
+Asking for no version asks the GitHub releases API for the newest *published* release,
+because GitHub's `/releases/latest/` shortcut never resolves to a prerelease — which is why
+this command used to report "no finc release has been published yet" about a release that
+was downloadable in a browser. Preferring stable over prerelease is deliberate: a release
+candidate is not what "give me a compiler" means while a stable build exists.
+
+The source route needs `git`, `cmake`, `conan`, `flex`, `bison` and LLVM, takes roughly
+twenty minutes, and installs as `~/.finn/toolchains/source-<ref>/`. It exists for triples
+the project publishes no artifact for, and for a checkout you intend to modify. It is a
+separate flag rather than a fallback: silently dropping into a twenty-minute build after a
+download fails would look like a hang.
 
 ## Usage
 

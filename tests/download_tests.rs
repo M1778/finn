@@ -222,6 +222,12 @@ fn an_index_schema_finn_does_not_read_is_refused() {
 
 #[test]
 fn no_published_release_says_so_plainly() {
+    // A pinned index that 404s is a *missing index*, not an empty release list: the caller
+    // named the one file to read, so there is nothing else to ask. This used to answer
+    // "No finc release has been published yet", which was untrue whenever the release
+    // existed without an index asset -- and it was the message a user saw for a
+    // prerelease, which `/releases/latest/` never resolves to. The empty-release-list
+    // case is covered in download_resolution_tests.rs, where the API is asked.
     let mut server = Server::new();
     let base = server.url();
     let _index = server.mock("GET", "/index.json").with_status(404).create();
@@ -233,7 +239,6 @@ fn no_published_release_says_so_plainly() {
         .arg("download")
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "No finc release has been published yet",
-        ));
+        .stderr(predicate::str::contains("No finc version index at"))
+        .stderr(predicate::str::contains(format!("{base}/index.json")));
 }

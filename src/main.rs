@@ -129,6 +129,14 @@ enum Commands {
     },
     Download {
         version: Option<String>,
+        /// Build finc from source with build.sh instead of unpacking a release artifact.
+        /// For a triple the project publishes nothing for, or for a checkout you intend to
+        /// modify. Needs the full toolchain (CMake, Conan, Flex, Bison, LLVM).
+        #[arg(long)]
+        source: bool,
+        /// The git revision to build from with --source. A tag, branch, or commit.
+        #[arg(long, value_name = "REF", default_value = "master")]
+        git_ref: String,
     },
     Do {
         task: String,
@@ -197,7 +205,17 @@ fn main() {
         Commands::Clean { cache } => commands::clean::run(cache, &ctx),
         Commands::Install { package } => commands::install::run(&package, &ctx),
         Commands::Test { check } => commands::test::run(check, &ctx),
-        Commands::Download { version } => commands::download::run(version, &ctx),
+        Commands::Download {
+            version,
+            source,
+            git_ref,
+        } => {
+            if source {
+                commands::download::run_from_source(version, &git_ref, &ctx)
+            } else {
+                commands::download::run(version, &ctx)
+            }
+        }
         Commands::Do { task, args } => commands::task::run(&task, args, &ctx),
     };
 

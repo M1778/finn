@@ -55,12 +55,133 @@ struct IndexTarget {
     sha256: String,
 }
 
-fn index_url() -> String {
-    // A full-URL override so a mirror, or a test, can serve the index without patching a
-    // constant. The default is the path the release job publishes to.
-    std::env::var("FINN_FINC_INDEX").unwrap_or_else(|_| {
-        format!("https://github.com/{FINC_REPO}/releases/latest/download/index.json")
-    })
+/// Where release assets live. Overridable so a mirror, or a test, can serve them.
+fn release_base() -> String {
+    std::env::var("FINN_FINC_RELEASE_BASE")
+        .unwrap_or_else(|_| format!("https://github.com/{FINC_REPO}/releases"))
+}
+
+/// The releases API endpoint, which is the only thing that can answer "newest published".
+fn releases_api() -> String {
+    std::env::var("FINN_FINC_RELEASES_API")
+        .unwrap_or_else(|_| format!("https://api.github.com/repos/{FINC_REPO}/releases"))
+}
+
+/// The index for one exact version.
+///
+/// A tag-pinned URL, not `/releases/latest/`: the latest shortcut excludes prereleases,
+/// so while every Fin release is a prerelease it 404s on a release that exists. Asking
+/// for the tag works either way and needs no API call and no rate limit.
+fn index_url_for_version(version: &str) -> String {
+    format!("{}/download/v{version}/index.json", release_base())
+}
+
+/// One entry of the releases API answer, trimmed to the fields this code reads.
+#[derive(Deserialize, Debug)]
+struct ApiRelease {
+    #[serde(default)]
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    assets: Vec<ApiAsset>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ApiAsset {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    browser_download_url: String,
+}
+
+/// The index URL of the newest **published** release.
+///
+/// `/releases/latest/` is a redirect GitHub only issues for a non-prerelease, so a
+/// project whose releases are all prereleases gets a 404 from it while the release is
+/// perfectly downloadable. This asks the API instead and applies the definition the user
+/// means: published, newest by the tag's version number.
+fn newest_published_index(client: &Client) -> Result<(String, String)> {
+    let api = releases_api();
+    let resp = client
+        .get(&api)
+        .header("User-Agent", utils::user_agent())
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .with_context(|| format!("failed to ask {api} for the release list"))?;
+
+    if resp.status() == 403 || resp.status() == 429 {
+        return Err(anyhow!(
+            "GitHub refused the release list at {api} (HTTP {}). The API allows 60 \
+             unauthenticated requests an hour per address.\n\
+             Ask for a version explicitly, which needs no API call:\n  \
+             finn download <version>",
+            resp.status().as_u16()
+        ));
+    }
+    if !resp.status().is_success() {
+        return Err(anyhow!("{api} returned HTTP {}", resp.status().as_u16()));
+    }
+
+    let releases: Vec<ApiRelease> = resp
+        .json()
+        .context("the GitHub release list is not valid JSON")?;
+
+    let mut published: Vec<(String, Option<String>, bool)> = releases
+        .into_iter()
+        .filter(|r| !r.draft && !r.tag_name.is_empty())
+        .map(|r| {
+            let version = r.tag_name.trim_start_matches('v').to_string();
+            let index = r
+                .assets
+                .into_iter()
+                .find(|a| a.name == "index.json")
+                .map(|a| a.browser_download_url);
+            (version, index, r.prerelease)
+        })
+        .filter(|(version, _, _)| {
+            // An empty version would sort oddly and produce a nonsense URL.
+            !version.is_empty()
+        })
+        .collect();
+
+    if published.is_empty() {
+        return Err(anyhow!(
+            "No finc release has been published yet.\n\
+             Build the compiler from source, or point $FIN_COMPILER_PATH at a local finc."
+        ));
+    }
+
+    // Newest by version number, not by list order: the API returns them newest-first
+    // today, but that is a convention rather than a promise, and a project that backports
+    // a patch release puts an older tag at the top of the list.
+    published.sort_by_key(|(v, _, _)| std::cmp::Reverse(utils::version_key(v)));
+
+    // Prefer a stable release over a prerelease. `finn download` with no argument is the
+    // "give me a usable compiler" command, and a release candidate is not that while a
+    // stable build exists. If everything is a prerelease, take the newest of those --
+    // which is the situation Fin is in today, and refusing would be wrong.
+    let chosen = published
+        .iter()
+        .find(|(_, _, is_pre)| !*is_pre)
+        .or_else(|| published.first())
+        .expect("published is non-empty");
+
+    // A release that exists but carries no index is a broken release, not an absent one.
+    // Saying "nothing has been published" about a tag a user can see in a browser is the
+    // kind of untrue error message this command used to produce, so it is named exactly.
+    let url = chosen.1.clone().ok_or_else(|| {
+        anyhow!(
+            "finc v{} is published but carries no index.json asset, so there is nothing to \
+             read the version list from. That release is incomplete.\n\
+             Ask for a different version: finn download <version>",
+            chosen.0
+        )
+    })?;
+
+    Ok((chosen.0.clone(), url))
 }
 
 pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
@@ -77,7 +198,41 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         .unwrap_or_else(|_| Client::new());
 
     let pb = utils::create_spinner("Fetching the version index...", ctx.quiet);
-    let url = index_url();
+
+    // Resolve which index to read *before* fetching it. An explicit version names its own
+    // tag, so it works for a prerelease without asking GitHub anything. No version has to
+    // ask the API, because GitHub's `/releases/latest/` shortcut does not resolve to a
+    // prerelease -- which is what made this command claim nothing had been published.
+    let requested = version
+        .as_deref()
+        .map(|v| v.trim_start_matches('v').to_string());
+
+    let (resolved, url) = match requested {
+        Some(v) => {
+            // A full-URL override keeps a mirror or a test able to serve the index. It is
+            // only honoured when it is a full URL, so it cannot silently disagree with the
+            // version that was asked for.
+            let url = match std::env::var("FINN_FINC_INDEX") {
+                Ok(override_url) if !override_url.is_empty() => override_url,
+                _ => index_url_for_version(&v),
+            };
+            (v, url)
+        }
+        None => {
+            if let Ok(override_url) = std::env::var("FINN_FINC_INDEX")
+                && !override_url.is_empty()
+            {
+                // A test or mirror that names one exact index is asking for that index, so
+                // the version is read from it rather than from the release list.
+                (String::new(), override_url)
+            } else {
+                let (version, url) = newest_published_index(&client).inspect_err(|_| {
+                    pb.finish_and_clear();
+                })?;
+                (version, url)
+            }
+        }
+    };
 
     let resp = client
         .get(&url)
@@ -90,7 +245,7 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         pb.finish_and_clear();
         return Err(anyhow!(
             "No finc version index at {url}.\n\
-             No finc release has been published yet, so there is nothing to download. \
+             The release exists but carries no index.json, or it is not published yet. \
              Build the compiler from source, or point $FIN_COMPILER_PATH at a local finc."
         ));
     }
@@ -118,20 +273,27 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
         ));
     }
 
-    // A tag and a version differ by one character, and users type either.
-    let requested = version
-        .as_deref()
-        .map(|v| v.trim_start_matches('v').to_string());
-
-    let resolved = match requested {
-        Some(v) => v,
-        None => index.latest.clone().ok_or_else(|| {
-            anyhow!(
-                "the index names no latest version (every published release so far is a \
-                 prerelease). Ask for one explicitly: finn download <version>"
-            )
-        })?,
+    let resolved = if resolved.is_empty() {
+        // A pinned index: take the version it names as latest, and if it names none (all
+        // prereleases) take the newest version it carries rather than refusing.
+        index.latest.clone().unwrap_or_else(|| {
+            index
+                .versions
+                .keys()
+                .max_by_key(|v| utils::version_key(v))
+                .cloned()
+                .unwrap_or_default()
+        })
+    } else {
+        resolved
     };
+
+    if resolved.is_empty() {
+        pb.finish_and_clear();
+        return Err(anyhow!(
+            "the index at {url} carries no versions. Nothing to download."
+        ));
+    }
 
     let entry = index.versions.get(&resolved).ok_or_else(|| {
         let mut known: Vec<&String> = index.versions.keys().collect();
@@ -282,45 +444,42 @@ pub fn run(version: Option<String>, ctx: &FinnContext) -> Result<()> {
     let installed = final_dir.join("bin").join(utils::finc_exe_name());
 
     // The version the archive claims and the version the binary reports are two different
-    // facts. Checking them here means a mislabelled release is caught at install time
-    // rather than in the middle of somebody's build.
-    match crate::finc::Finc::at(installed.clone()) {
-        Ok(finc) => {
-            if !ctx.quiet {
-                println!(
-                    "{} Installed {} ({})",
-                    "[OK]".green(),
-                    finc.version(),
-                    entry.tag
-                );
-                println!("   {}", installed.display());
-                if finc.version().semver != resolved {
-                    println!(
-                        "{} the index published this as {} but the binary reports {}",
-                        "[WARN]".yellow(),
-                        resolved,
-                        finc.version().semver
-                    );
-                }
-                if entry.prerelease {
-                    println!("   {} this is a prerelease.", "note:".cyan());
-                }
-            }
-        }
+    // facts. A toolchain that cannot answer `--version` is not installed, it is removed:
+    // `find_compiler` picks the newest toolchain directory without asking it anything, so
+    // leaving a crashing binary here poisons every later command with a mystery failure.
+    // The published v1.0.0 artifacts segfault on glibc, which is how this was found.
+    let finc = match crate::finc::Finc::at(installed.clone()) {
+        Ok(finc) => finc,
         Err(e) => {
-            if !ctx.quiet {
-                println!(
-                    "{} Unpacked finc {} to {}",
-                    "[OK]".green(),
-                    resolved,
-                    final_dir.display()
-                );
-                println!(
-                    "{} but it did not answer --version as this finn expects: {}",
-                    "[WARN]".yellow(),
-                    e
-                );
-            }
+            fs::remove_dir_all(&final_dir).ok();
+            pb.finish_and_clear();
+            return Err(anyhow!(
+                "the finc in {file_name} does not answer --version, so it is not usable: {e}\n\
+                 Nothing was installed. This release's {target_triple} artifact is broken; try \
+                 another version with `finn download <version>`, or build from source.",
+                target_triple = utils::TARGET
+            ));
+        }
+    };
+
+    if !ctx.quiet {
+        println!(
+            "{} Installed {} ({})",
+            "[OK]".green(),
+            finc.version(),
+            entry.tag
+        );
+        println!("   {}", installed.display());
+        if finc.version().semver != resolved {
+            println!(
+                "{} the index published this as {} but the binary reports {}",
+                "[WARN]".yellow(),
+                resolved,
+                finc.version().semver
+            );
+        }
+        if entry.prerelease {
+            println!("   {} this is a prerelease.", "note:".cyan());
         }
     }
 
@@ -463,4 +622,184 @@ fn extract(archive: &Path, dest: &Path) -> Result<()> {
         archive.display(),
         failures.join("\n  ")
     ))
+}
+
+/// Clone a revision of the Fin repository and build the compiler with its own build.sh.
+///
+/// The release path is the one to use when it works. This exists for the machines that
+/// path cannot serve: a triple with no published artifact, a platform whose libc is older
+/// than the release's, or someone who wants to modify the compiler. It is deliberately a
+/// different route rather than a fallback, because a source build takes twenty minutes and
+/// needs CMake, Conan, Flex, Bison and the pinned LLVM -- silently dropping into that after
+/// a download fails would look like a hang.
+///
+/// The result lands in the same `~/.finn/toolchains/<version>/bin/finc` layout as a release
+/// install, including `lib/std`, so `find_compiler` and `finn build` need no special case.
+pub fn run_from_source(version: Option<String>, git_ref: &str, ctx: &FinnContext) -> Result<()> {
+    if ctx.offline {
+        return Err(anyhow!(
+            "`finn download --source` clones the Fin repository, so it cannot run with \
+             --offline."
+        ));
+    }
+
+    // A version argument with --source is a tag to check out; without one, the caller's
+    // --git-ref decides. `v1.0.1` and `1.0.1` name the same tag.
+    let reference = match version {
+        Some(v) => {
+            if git_ref != "master" {
+                return Err(anyhow!(
+                    "give either a version ({v}) or --git-ref ({git_ref}), not both: they \
+                     name different things to check out"
+                ));
+            }
+            format!("v{}", v.trim_start_matches('v'))
+        }
+        None => git_ref.to_string(),
+    };
+
+    for program in ["git", "cmake", "conan", "flex", "bison"] {
+        if which::which(program).is_err() {
+            return Err(anyhow!(
+                "`finn download --source` needs {program} on PATH and could not find it.\n\
+                 A source build also needs LLVM, which CMake finds through its own search.\n\
+                 Use the release path (`finn download`) when this platform has an artifact."
+            ));
+        }
+    }
+
+    let toolchains = utils::toolchains_dir()?;
+    fs::create_dir_all(&toolchains)
+        .with_context(|| format!("failed to create {}", toolchains.display()))?;
+
+    // Named after the revision so two source builds do not collide, and so the directory
+    // says where it came from.
+    let dir_name = format!("source-{}", reference.replace('/', "-"));
+    let final_dir = toolchains.join(&dir_name);
+    if final_dir.exists() && !ctx.force {
+        if !ctx.quiet {
+            println!(
+                "{} {} is already installed at {}. Use --force to rebuild.",
+                "[INFO]".blue(),
+                reference,
+                final_dir.display()
+            );
+        }
+        return Ok(());
+    }
+
+    let staging = toolchains.join(format!(".staging-{dir_name}"));
+    if staging.exists() {
+        fs::remove_dir_all(&staging).ok();
+    }
+
+    let pb = utils::create_spinner(&format!("Cloning {reference}..."), ctx.quiet);
+    let clone = Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            &reference,
+            &format!("https://github.com/{FINC_REPO}.git"),
+            &staging.display().to_string(),
+        ])
+        .output()
+        .context("failed to run git clone")?;
+
+    if !clone.status.success() {
+        let err = String::from_utf8_lossy(&clone.stderr);
+        fs::remove_dir_all(&staging).ok();
+        pb.finish_and_clear();
+        return Err(anyhow!(
+            "git could not check out {reference}: {}",
+            err.trim()
+        ));
+    }
+
+    pb.set_message(format!("Building {reference} (this takes a while)..."));
+    // --release and --no-test: a toolchain is being installed, not developed. The test
+    // suite belongs to whoever touches the compiler, and running it here would double a
+    // twenty-minute build for no added confidence in the artifact.
+    let build = Command::new("sh")
+        .arg("./build.sh")
+        .arg("--release")
+        .arg("--no-test")
+        .current_dir(&staging)
+        .output()
+        .context("failed to run build.sh")?;
+
+    if !build.status.success() {
+        let err = String::from_utf8_lossy(&build.stderr);
+        let out = String::from_utf8_lossy(&build.stdout);
+        let tail: String = out
+            .lines()
+            .chain(err.lines())
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::remove_dir_all(&staging).ok();
+        pb.finish_and_clear();
+        return Err(anyhow!(
+            "build.sh failed for {reference}. Last output:\n{tail}"
+        ));
+    }
+
+    // The same archive layout a release has, so nothing downstream can tell the difference.
+    let bin_dir = staging.join("bin");
+    fs::create_dir_all(&bin_dir)?;
+    let built = staging.join("build").join(utils::finc_exe_name());
+    if !built.exists() {
+        fs::remove_dir_all(&staging).ok();
+        pb.finish_and_clear();
+        return Err(anyhow!(
+            "build.sh reported success but there is no {} -- the build layout is not what \
+             this finn expects",
+            built.display()
+        ));
+    }
+    fs::rename(&built, bin_dir.join(utils::finc_exe_name()))
+        .context("failed to move the built finc into bin/")?;
+
+    if final_dir.exists() {
+        fs::remove_dir_all(&final_dir)?;
+    }
+    fs::rename(&staging, &final_dir)
+        .with_context(|| format!("failed to move the build into {}", final_dir.display()))?;
+    pb.finish_and_clear();
+
+    // Same check as a release install: a compiler that cannot say what it is must not be
+    // left where find_compiler will pick it up.
+    let installed = final_dir.join("bin").join(utils::finc_exe_name());
+    match crate::finc::Finc::at(installed.clone()) {
+        Ok(finc) => {
+            if !ctx.quiet {
+                println!(
+                    "{} Built and installed {} from {}",
+                    "[OK]".green(),
+                    finc.version(),
+                    reference
+                );
+                println!("   {}", installed.display());
+                println!(
+                    "   {} this toolchain has no version directory name to match the \
+                     release, so it is installed as {}.",
+                    "note:".cyan(),
+                    dir_name
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            fs::remove_dir_all(&final_dir).ok();
+            Err(anyhow!(
+                "the compiler built from {reference} does not answer --version: {e}\n\
+                 Nothing was installed."
+            ))
+        }
+    }
 }
