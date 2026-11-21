@@ -49,14 +49,16 @@ jobs:
   # packed wrong -- the published v1.0.0 artifacts segfault, and only an end-to-end
   # install found it.
   #
-  # It asks for a version explicitly so it does not depend on which release is newest,
-  # and it asserts the installed compiler answers --version, which is the check that
-  # would have failed for v1.0.0.
+  # It installs whatever the newest published release is and then uses it for real. If
+  # that release is broken, this is red, and that is the correct signal: the newest thing
+  # a user can download does not work.
   release-smoke:
     name: install the published release end to end (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push'
     strategy:
+      # One platform's broken artifact must not hide the other two.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
@@ -72,6 +74,26 @@ jobs:
       shell: bash
       run: cargo build --release
 
+    # On Linux the glibc artifact needs the pinned LLVM runtime, which INSTALL.md says
+    # plainly. Installing it here is what a user following the docs does, so this proves
+    # the documented path rather than a path only CI can take.
+    - name: Install the documented LLVM runtime (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -eu
+        if ldconfig -p 2>/dev/null | grep -q 'libLLVM.so.22'; then
+          echo "libLLVM.so.22 already present"
+          exit 0
+        fi
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+        codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-22 main" \
+          | sudo tee /etc/apt/sources.list.d/llvm22.list > /dev/null
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libllvm22
+
     - name: Install the newest published finc and use it
       shell: bash
       env:
@@ -82,8 +104,7 @@ jobs:
         [ -f "$BIN.exe" ] && BIN="$BIN.exe"
         "$BIN" download
         FINC="$FINN_TEST_HOME/.finn/toolchains"/*/bin/finc
-        [ -f "$FINC.exe" ] && FINC="$FINC.exe"
-        # shellcheck disable=SC2086
+        [ -f "$FINC" ] || FINC="$FINN_TEST_HOME/.finn/toolchains"/*/bin/finc.exe
         "$FINC" --version
         # A compiler that runs but cannot build is not installed. Build one program.
         printf 'fun main() <noret> { printf("release smoke\\n"); }\n' > smoke.fin
