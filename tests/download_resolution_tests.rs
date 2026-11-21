@@ -38,6 +38,12 @@
 //!   `/latest/` shortcut is the one thing that cannot answer that question.
 //!
 //! Every test sets `FINN_TEST_HOME` so nothing touches the real `~/.finn`.
+//!
+//! Unix-only, like the other download suite: the fixture archive carries a shebanged mock
+//! `finc` and relies on a 0755 mode bit, which is an `std::os::unix` API. Gating the whole
+//! file rather than each test is what keeps the Windows lane compiling -- an import inside
+//! a `#[cfg]` function still has to resolve.
+#![cfg(unix)]
 
 use mockito::Server;
 use predicates::prelude::*;
