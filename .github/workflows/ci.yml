@@ -109,6 +109,28 @@ jobs:
         sudo apt-get update -qq
         sudo apt-get install -y -qq libllvm22
 
+    # The macOS artifact names an absolute Homebrew path in its load commands, so this is not
+    # an optimisation: without the keg, dyld aborts before `main` and the job reports a broken
+    # compiler. INSTALL.md says the same thing to a user, and this lane is where that
+    # instruction is tested rather than asserted.
+    - name: Install the documented LLVM runtime (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -eu
+        prefix=/opt/homebrew
+        [ "$(uname -m)" = "x86_64" ] && prefix=/usr/local
+        if [ -d "$prefix/opt/llvm@22" ]; then
+          echo "llvm@22 already present at $prefix/opt/llvm@22"
+          exit 0
+        fi
+        brew install llvm@22
+        if [ ! -d "$prefix/opt/llvm@22" ]; then
+          echo "::error::brew finished but $prefix/opt/llvm@22 does not exist, so the artifact's"
+          echo "::error::load command cannot resolve"
+          exit 1
+        fi
+
     - name: Install the newest published finc and use it
       shell: bash
       env:
