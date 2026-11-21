@@ -43,3 +43,51 @@ jobs:
 
     - name: Run Tests
       run: cargo test --verbose
+
+  # The unit and integration suites use fixtures, which is right: they must run without
+  # network access. This job exists because a fixture cannot catch a release that is
+  # packed wrong -- the published v1.0.0 artifacts segfault, and only an end-to-end
+  # install found it.
+  #
+  # It asks for a version explicitly so it does not depend on which release is newest,
+  # and it asserts the installed compiler answers --version, which is the check that
+  # would have failed for v1.0.0.
+  release-smoke:
+    name: install the published release end to end (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: swatinem/rust-cache@v2
+
+    - name: Build finn
+      shell: bash
+      run: cargo build --release
+
+    - name: Install the newest published finc and use it
+      shell: bash
+      env:
+        FINN_TEST_HOME: ${{ runner.temp }}/finn-home
+      run: |
+        set -eu
+        BIN=target/release/finn
+        [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+        "$BIN" download
+        FINC="$FINN_TEST_HOME/.finn/toolchains"/*/bin/finc
+        [ -f "$FINC.exe" ] && FINC="$FINC.exe"
+        # shellcheck disable=SC2086
+        "$FINC" --version
+        # A compiler that runs but cannot build is not installed. Build one program.
+        printf 'fun main() <noret> { printf("release smoke\\n"); }\n' > smoke.fin
+        FIN_COMPILER_PATH="$FINC" "$BIN" init "${{ runner.temp }}/Smoke" --yes
+        cp smoke.fin "${{ runner.temp }}/Smoke/src/main.fin"
+        ( cd "${{ runner.temp }}/Smoke" && FIN_COMPILER_PATH="$FINC" "$BIN" build )
+        ( cd "${{ runner.temp }}/Smoke" && ./out/Smoke )
