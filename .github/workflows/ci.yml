@@ -56,6 +56,14 @@ jobs:
     name: install the published release end to end (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push'
+    # EXPECTED RED until `v1.0.1` is published. This job exists to install the newest
+    # published release and build a program with it, and the newest published release today
+    # is `v1.0.0`, whose glibc and macOS artifacts do not start. That is the defect the job
+    # was written to catch, and it caught it.
+    #
+    # When 1.0.1 is published these go green with no change here -- the job reads
+    # `releases/latest` by way of the API, not a pinned version. If they are still red after
+    # 1.0.1 ships, read the failure rather than this comment: it is no longer expected.
     strategy:
       # One platform's broken artifact must not hide the other two.
       fail-fast: false
