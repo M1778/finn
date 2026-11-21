@@ -604,7 +604,25 @@ impl Finc {
         let out = Command::new(&path)
             .arg("--version")
             .output()
-            .with_context(|| format!("failed to execute {}", path.display()))?;
+            .with_context(|| {
+                // A loader failure is not a missing file: the process exists and the
+                // dynamic loader refused it because a shared library it names is absent.
+                // That is the shape of the shipped v1.0.0/v1.0.1 macOS and glibc
+                // artifacts on a machine without the pinned LLVM runtime, and "failed to
+                // execute" alone would send the reader looking for the wrong problem.
+                //
+                // The remedy is in INSTALL.md's dependency table; this points at it rather
+                // than restating it, because a restated table goes stale.
+                format!(
+                    "failed to execute {}.\n\
+                     If this is a released artifact and the message above mentions a missing \
+                     shared library (libLLVM.so.22, libLLVM.dylib), the compiler is present \
+                     and the runtime it needs is not: install the pinned LLVM runtime, use \
+                     the static musl build on Linux, or run `finn download --source`. \
+                     INSTALL.md lists which artifacts need what.",
+                    path.display()
+                )
+            })?;
 
         if !out.status.success() {
             return Err(anyhow!(
