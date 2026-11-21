@@ -66,6 +66,12 @@ this command used to report "no finc release has been published yet" about a rel
 was downloadable in a browser. Preferring stable over prerelease is deliberate: a release
 candidate is not what "give me a compiler" means while a stable build exists.
 
+That API request is rate limited to **60 an hour per IP address** without a token, and an
+office, a CI runner fleet or a NAT shares one address. `$GITHUB_TOKEN` or `$GH_TOKEN` is used
+when either is set (5,000 an hour), and Actions provides the first automatically. If you hit
+the limit anyway, `finn download <version>` names one tag and needs no API call at all — which
+is what the error message tells you to do.
+
 The source route needs `git`, `cmake`, `conan`, `flex`, `bison` and LLVM, takes roughly
 twenty minutes, and installs as `~/.finn/toolchains/source-<ref>/`. It exists for triples
 the project publishes no artifact for, and for a checkout you intend to modify. It is a
