@@ -60,7 +60,9 @@ jobs:
   release-smoke:
     name: install the published release end to end (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    if: github.event_name == 'push'
+    # A push or a manual dispatch, not pull_request: it needs the network and a real
+    # published release, so a fork's PR must not go red for a reason the author cannot fix.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     # EXPECTED RED until `v1.0.1` is published. This job exists to install the newest
     # published release and build a program with it, and the newest published release today
     # is `v1.0.0`, whose glibc and macOS artifacts do not start. That is the defect the job
