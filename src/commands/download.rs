@@ -128,10 +128,29 @@ struct ApiAsset {
 /// means: published, newest by the tag's version number.
 fn newest_published_index(client: &Client) -> Result<(String, String)> {
     let api = releases_api();
-    let resp = client
+    let mut request = client
         .get(&api)
         .header("User-Agent", utils::user_agent())
-        .header("Accept", "application/vnd.github+json")
+        .header("Accept", "application/vnd.github+json");
+
+    // An authenticated request gets 5,000 an hour instead of 60, and CI shares one egress
+    // address across every job on a runner. Without this, a busy day exhausts the limit and
+    // `finn download` fails with a rate-limit message that has nothing to do with the user's
+    // own usage -- which is exactly how this was found, on a macOS lane at 06:33 after a
+    // morning of routing every ecosystem repository's CI through the same endpoint.
+    //
+    // `GITHUB_TOKEN` and `GH_TOKEN` are the names Actions and the `gh` CLI already use, so a
+    // workflow needs no new configuration to benefit.
+    for var in ["GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Ok(token) = std::env::var(var)
+            && !token.is_empty()
+        {
+            request = request.bearer_auth(token);
+            break;
+        }
+    }
+
+    let resp = request
         .send()
         .with_context(|| format!("failed to ask {api} for the release list"))?;
 
