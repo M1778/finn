@@ -135,6 +135,10 @@ jobs:
       shell: bash
       env:
         FINN_TEST_HOME: ${{ runner.temp }}/finn-home
+        # An authenticated release-list request gets 5,000 an hour instead of 60, and every
+        # job on a runner shares one egress address. Without this the lane fails at the rate
+        # limit on a busy day, which says nothing about the release it was checking.
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -eu
         # Absolute: this script `cd`s into the generated project later, and a relative path
