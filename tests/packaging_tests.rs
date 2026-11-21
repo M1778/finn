@@ -293,6 +293,12 @@ const SUPPORTED_PLATFORMS: &[(&str, &str)] = &[
 /// `release.yml` names them once in the matrix and refers to them by expression in the upload
 /// step, so the published set is the cross product. Expanding it here is what lets the
 /// assertions below be about real file names instead of about YAML.
+///
+/// `#[cfg(unix)]` because its only caller is: the installer test drives `install.sh`, a shell
+/// script, and skips on Windows. Without the gate the Windows lane refuses to compile the test
+/// crate for a function nothing there uses -- which is what it did, and it is a fair complaint
+/// even though the code is correct on the platform that runs it.
+#[cfg(unix)]
 fn published_asset_names(release: &str) -> Vec<String> {
     let matrix_assets: Vec<String> = release
         .lines()
